@@ -1,0 +1,103 @@
+-- ✅ Load Wizard UI Library
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/wizard"))()
+
+-- Create main window
+local Window = Library:NewWindow("Thebestscripter")
+local Section = Window:NewSection("Main Features")
+
+-- Player reference
+local player = game.Players.LocalPlayer
+
+-- Teleport function
+local function tpTo(part)
+    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        player.Character.HumanoidRootPart.CFrame = part.CFrame + Vector3.new(0, 3, 0)
+    end
+end
+
+-- Stop control
+local activeThread = nil
+local function stopAll()
+    if activeThread then
+        task.cancel(activeThread)
+        activeThread = nil
+    end
+end
+
+-- 🟢 BUTTON 1: Ducks in workspace.Ducks → Mansion
+Section:CreateButton("Ducks → Mansion (Once)", function()
+    stopAll()
+    activeThread = task.spawn(function()
+        for group = 1, 4 do
+            local maxNum = (group == 4) and 4 or 5
+            for num = 1, maxNum do
+                local duck = workspace:FindFirstChild("Ducks") and workspace.Ducks:FindFirstChild("duck" .. group .. "." .. num)
+                if duck then
+                    tpTo(duck)
+                    task.wait(1)
+                end
+            end
+        end
+        local mansion = workspace:FindFirstChild("Mansion")
+            and workspace.Mansion:FindFirstChild("Activ")
+            and workspace.Mansion.Activ:FindFirstChild("TeleportPartMain")
+        if mansion then
+            tpTo(mansion)
+        end
+    end)
+end)
+
+-- 🟡 BUTTON 2: Blockout.Ducks path
+Section:CreateButton("Blockout Ducks Path", function()
+    stopAll()
+    activeThread = task.spawn(function()
+        local startZone = workspace:FindFirstChild("RaceTest") and workspace.RaceTest:FindFirstChild("QueueZone")
+        if startZone then
+            tpTo(startZone)
+            task.wait(11)
+        end
+        local blockout = workspace:FindFirstChild("Blockout") and workspace.Blockout:FindFirstChild("Ducks")
+        if blockout then
+            for group = 1, 4 do
+                local maxNum = (group == 4) and 4 or 5
+                for num = 1, maxNum do
+                    local duck = blockout:FindFirstChild("duck" .. group .. "." .. num)
+                    if duck then
+                        tpTo(duck)
+                        task.wait(1)
+                    end
+                end
+            end
+        end
+        local lastDuck = workspace:FindFirstChild("\209\131\209\130\208\186\208\176 \208\190\209\135\208\186\208\184")
+        if lastDuck and lastDuck:FindFirstChild("duck") then
+            tpTo(lastDuck.duck)
+        end
+    end)
+end)
+
+-- 🔵 BUTTON 3: Football → Ducks path
+Section:CreateButton("Football → Ducks", function()
+    stopAll()
+    activeThread = task.spawn(function()
+        local football = workspace:FindFirstChild("Other") and workspace.Other:FindFirstChild("TeleportFootball")
+        if football then
+            tpTo(football)
+            task.wait(1)
+        end
+        local ducks = workspace:FindFirstChild("Other") and workspace.Other:FindFirstChild("Ducks")
+        if ducks then
+            for group = 1, 4 do
+                local maxNum = (group == 4) and 4 or 5
+                for num = 1, maxNum do
+                    local duck = ducks:FindFirstChild("duck" .. group .. "." .. num)
+                    if duck then
+                        tpTo(duck)
+                        task.wait(1)
+                    end
+                end
+            end
+        end
+    end)
+end)
+
