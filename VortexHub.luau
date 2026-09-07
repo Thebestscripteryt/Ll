@@ -841,6 +841,52 @@ function Vortex:CreateWindow(options)
         tabBarOutlineGradient.Rotation = (tabBarOutlineGradient.Rotation + delta * 60) % 360
     end)
 
+    local tabFadeLeft = make("Frame", {
+        Name = "VortexTabFadeLeft",
+        Position = UDim2.fromOffset(12, 66),
+        Size = UDim2.fromOffset(20, 34),
+        BackgroundColor3 = theme.Background,
+        BorderSizePixel = 0,
+        ZIndex = 3,
+        Visible = false,
+    }, root)
+    make("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+    }, tabFadeLeft)
+    local tabFadeRight = make("Frame", {
+        Name = "VortexTabFadeRight",
+        Position = UDim2.new(1, -32, 0, 66),
+        Size = UDim2.fromOffset(20, 34),
+        BackgroundColor3 = theme.Background,
+        BorderSizePixel = 0,
+        ZIndex = 3,
+        Visible = false,
+    }, root)
+    make("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(1, 0),
+        }),
+    }, tabFadeRight)
+    local function updateTabFades()
+        if not tabBar.Parent then return end
+        local viewport = tabBar.AbsoluteSize.X
+        local canvas = tabBar.AbsoluteCanvasSize.X
+        local overflow = canvas > viewport + 1
+        local pos = tabBar.CanvasPosition.X
+        tabFadeLeft.Visible = overflow and pos > 2
+        tabFadeRight.Visible = overflow and pos < (canvas - viewport - 2)
+    end
+    local tabFadeConnections = {
+        tabBar:GetPropertyChangedSignal("CanvasPosition"):Connect(updateTabFades),
+        tabBar:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(updateTabFades),
+        tabBar:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateTabFades),
+    }
+    updateTabFades()
+
     local window = {
         Gui = gui,
         Root = root,
@@ -852,7 +898,7 @@ function Vortex:CreateWindow(options)
         IsOpen = true,
         IsMinimized = false,
         PanelTransparency = panelTransparency,
-        _connections = {gradientConnection, rainbowConnection},
+        _connections = {gradientConnection, rainbowConnection, tabFadeConnections[1], tabFadeConnections[2], tabFadeConnections[3]},
     }
     table.insert(self.Windows, window)
     function window:Track(connection)
@@ -1035,6 +1081,12 @@ function Vortex:CreateWindow(options)
         self.IsMinimized = value == true
         tabBar.Visible = not self.IsMinimized
         content.Visible = not self.IsMinimized
+        if self.IsMinimized then
+            tabFadeLeft.Visible = false
+            tabFadeRight.Visible = false
+        else
+            updateTabFades()
+        end
         minimize.Text = self.IsMinimized and "+" or "—"
         topRepair.Visible = not self.IsMinimized
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize}, Enum.EasingStyle.Quint)
