@@ -181,11 +181,6 @@ local function animateButton(button, normalColor, hoverColor)
         local parent = button.Parent
         local underListLayout = parent and parent:FindFirstChildOfClass("UIListLayout") ~= nil
         if underListLayout then
-            -- UIListLayout always re-asserts a top-left based Position on its
-            -- children, which fights the AnchorPoint recentering below and
-            -- makes the button appear to grow only to the right/bottom.
-            -- Give the button a static "slot" that stays in the layout, and
-            -- scale the real button freely inside it instead.
             local slot = make("Frame", {
                 Name = button.Name .. "Slot",
                 Size = button.Size,
@@ -584,6 +579,7 @@ function Vortex:CreateWindow(options)
     local autoSize = options.AutoSize ~= false
     local mobileHeightRatio = math.clamp(options.MobileHeightRatio or 0.78, 0.62, 0.9)
     local mobileAspectRatio = math.clamp(options.MobileAspectRatio or (width / height), 0.72, 1.5)
+    local panelTransparency = math.clamp(options.PanelTransparency or options.BackgroundColorTransparency or 0, 0, 1)
     local camera = workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
     local isTouch = UserInputService.TouchEnabled
@@ -632,8 +628,8 @@ function Vortex:CreateWindow(options)
     }, getPlayerGui())
     local root = make("Frame", {
         Name = "Window",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0.5, -height / 2),
         Size = UDim2.fromOffset(width, height),
         BackgroundColor3 = theme.Background,
         BorderSizePixel = 0,
@@ -695,7 +691,7 @@ function Vortex:CreateWindow(options)
         Size = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
         ClipsDescendants = true,
-        ZIndex = 20,
+        ZIndex = 1,
     }, root)
     corner(scanClip, 14)
     local scanline = make("Frame", {
@@ -706,7 +702,7 @@ function Vortex:CreateWindow(options)
         BackgroundColor3 = theme.Accent2,
         BackgroundTransparency = 0.72,
         BorderSizePixel = 0,
-        ZIndex = 20,
+        ZIndex = 1,
     }, scanClip)
     local scanGradient = make("UIGradient", {
         Rotation = 90,
@@ -826,6 +822,32 @@ function Vortex:CreateWindow(options)
         ZIndex = 2,
     }, root)
 
+    local tabBarLine = make("Frame", {
+        Name = "VortexTabBarLine",
+        Position = UDim2.new(0, 12, 0, 103),
+        Size = UDim2.new(1, -24, 0, 2),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        ZIndex = 2,
+    }, root)
+    corner(tabBarLine, 1)
+    local tabBarGradient = make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+            ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+            ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+            ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+            ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+            ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+            ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+        }),
+    }, tabBarLine)
+    local rainbowConnection = RunService.RenderStepped:Connect(function(delta)
+        if not tabBarLine.Parent then rainbowConnection:Disconnect() return end
+        if not gui.Enabled then return end
+        tabBarGradient.Offset = Vector2.new((tabBarGradient.Offset.X + delta * 0.35) % 1, 0)
+    end)
+
     local window = {
         Gui = gui,
         Root = root,
@@ -836,7 +858,8 @@ function Vortex:CreateWindow(options)
         NormalSize = UDim2.fromOffset(width, height),
         IsOpen = true,
         IsMinimized = false,
-        _connections = {gradientConnection},
+        PanelTransparency = panelTransparency,
+        _connections = {gradientConnection, rainbowConnection},
     }
     table.insert(self.Windows, window)
     function window:Track(connection)
@@ -864,6 +887,16 @@ function Vortex:CreateWindow(options)
     function window:SetBackgroundDim(value)
         self.BackgroundDim.BackgroundTransparency = math.clamp(value or 0, 0, 1)
     end
+    function window:SetPanelTransparency(value)
+        local target = math.clamp(value or 0, 0, 1)
+        self.PanelTransparency = target
+        if self.IsOpen and self.Root.Visible then
+            tween(self.Root, 0.18, {BackgroundTransparency = target})
+        end
+        return target
+    end
+    window.SetBackgroundColorTransparency = window.SetPanelTransparency
+    window.SetWindowTransparency = window.SetPanelTransparency
     function window:RemoveBackground()
         self.Background.Image = ""
     end
@@ -876,7 +909,7 @@ function Vortex:CreateWindow(options)
         local view, size = currentCamera.ViewportSize, self.Root.AbsoluteSize
         local x = math.clamp(self.Root.AbsolutePosition.X, 8, math.max(8, view.X - size.X - 8))
         local y = math.clamp(self.Root.AbsolutePosition.Y, 8, math.max(8, view.Y - size.Y - 8))
-        self.Root.Position = UDim2.fromOffset(x + size.X / 2, y + size.Y / 2)
+        self.Root.Position = UDim2.fromOffset(x + size.X / 2, y)
     end
     function window:ResponsiveSize()
         local currentCamera = workspace.CurrentCamera
@@ -900,7 +933,7 @@ function Vortex:CreateWindow(options)
 
     root.Size = UDim2.fromOffset(math.max(1, width - 80), math.max(1, height - 80))
     root.BackgroundTransparency = 1
-    tween(root, 0.38, {Size = window.NormalSize, BackgroundTransparency = 0}, Enum.EasingStyle.Back)
+    tween(root, 0.38, {Size = window.NormalSize, BackgroundTransparency = panelTransparency}, Enum.EasingStyle.Back)
 
     local dragging = false
     local dragBlocked = false
@@ -927,7 +960,7 @@ function Vortex:CreateWindow(options)
             local size = root.AbsoluteSize
             local x = math.clamp(startAbsolute.X + delta.X, 8, math.max(8, view.X - size.X - 8))
             local y = math.clamp(startAbsolute.Y + delta.Y, 8, math.max(8, view.Y - size.Y - 8))
-            dragTarget = UDim2.fromOffset(x + size.X / 2, y + size.Y / 2)
+            dragTarget = UDim2.fromOffset(x + size.X / 2, y)
         end
     end))
     window:Track(UserInputService.InputEnded:Connect(function(input)
@@ -971,7 +1004,7 @@ function Vortex:CreateWindow(options)
         self.Gui.Enabled = true
         self.Root.Visible = true
         scanline.Visible = true
-        tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize, BackgroundTransparency = 0}, Enum.EasingStyle.Back)
+        tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize, BackgroundTransparency = self.PanelTransparency}, Enum.EasingStyle.Back)
     end
 
     function window:Close()
@@ -1000,7 +1033,8 @@ function Vortex:CreateWindow(options)
     end
 
     function window:Center()
-        tween(self.Root, 0.25, {Position = UDim2.fromScale(0.5, 0.5)})
+        local currentHeight = self.Root.AbsoluteSize.Y
+        tween(self.Root, 0.25, {Position = UDim2.new(0.5, 0, 0.5, -currentHeight / 2)})
     end
 
     function window:Minimize(value)
@@ -1008,6 +1042,7 @@ function Vortex:CreateWindow(options)
         self.IsMinimized = value == true
         tabBar.Visible = not self.IsMinimized
         content.Visible = not self.IsMinimized
+        tabBarLine.Visible = not self.IsMinimized
         minimize.Text = self.IsMinimized and "+" or "—"
         topRepair.Visible = not self.IsMinimized
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize}, Enum.EasingStyle.Quint)
