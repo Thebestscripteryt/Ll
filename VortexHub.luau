@@ -178,15 +178,36 @@ end
 local function animateButton(button, normalColor, hoverColor)
     local scale = button:FindFirstChild("VortexButtonScale")
     if not scale then
-        local size = button.AbsoluteSize
-        local position = button.Position
-        button.AnchorPoint = Vector2.new(0.5, 0.5)
-        button.Position = UDim2.new(
-            position.X.Scale,
-            position.X.Offset + size.X / 2,
-            position.Y.Scale,
-            position.Y.Offset + size.Y / 2
-        )
+        local parent = button.Parent
+        local underListLayout = parent and parent:FindFirstChildOfClass("UIListLayout") ~= nil
+        if underListLayout then
+            -- UIListLayout always re-asserts a top-left based Position on its
+            -- children, which fights the AnchorPoint recentering below and
+            -- makes the button appear to grow only to the right/bottom.
+            -- Give the button a static "slot" that stays in the layout, and
+            -- scale the real button freely inside it instead.
+            local slot = make("Frame", {
+                Name = button.Name .. "Slot",
+                Size = button.Size,
+                LayoutOrder = button.LayoutOrder,
+                BackgroundTransparency = 1,
+                ClipsDescendants = false,
+            }, parent)
+            button.Size = UDim2.new(1, 0, 1, 0)
+            button.Position = UDim2.new(0.5, 0, 0.5, 0)
+            button.AnchorPoint = Vector2.new(0.5, 0.5)
+            button.Parent = slot
+        else
+            local size = button.AbsoluteSize
+            local position = button.Position
+            button.AnchorPoint = Vector2.new(0.5, 0.5)
+            button.Position = UDim2.new(
+                position.X.Scale,
+                position.X.Offset + size.X / 2,
+                position.Y.Scale,
+                position.Y.Offset + size.Y / 2
+            )
+        end
         scale = make("UIScale", {Name = "VortexButtonScale", Scale = 1}, button)
     end
     button.MouseEnter:Connect(function()
@@ -669,6 +690,14 @@ function Vortex:CreateWindow(options)
         }),
         Rotation = 20,
     }, outline)
+    local scanClip = make("CanvasGroup", {
+        Name = "VortexScanClip",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+        ZIndex = 20,
+    }, root)
+    corner(scanClip, 14)
     local scanline = make("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(-0.28, 0, 1.18, 0),
@@ -678,7 +707,7 @@ function Vortex:CreateWindow(options)
         BackgroundTransparency = 0.72,
         BorderSizePixel = 0,
         ZIndex = 20,
-    }, root)
+    }, scanClip)
     local scanGradient = make("UIGradient", {
         Rotation = 90,
         Color = ColorSequence.new(theme.Accent, theme.Accent2),
