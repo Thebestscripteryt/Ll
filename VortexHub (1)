@@ -13,6 +13,8 @@ local Vortex = {
     Creator = "Nexxy",
     Version = "1.0.0",
     Windows = {},
+    Flags = {},
+    NotificationLimit = 5,
 }
 
 local Players = game:GetService("Players")
@@ -20,9 +22,20 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
+local activeTweens = setmetatable({}, {__mode = "k"})
+local onceButtonStates = setmetatable({}, {__mode = "k"})
 
 local player = Players.LocalPlayer
-local playerGui = player and player:WaitForChild("PlayerGui")
+local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+local function getPlayerGui()
+    player = Players.LocalPlayer
+    if not player then
+        Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+        player = Players.LocalPlayer
+    end
+    playerGui = playerGui and playerGui.Parent == player and playerGui or player:WaitForChild("PlayerGui")
+    return playerGui
+end
 
 Vortex.Themes = {
     Vortex = {
@@ -58,6 +71,9 @@ local function make(className, properties, parent)
     for property, value in pairs(properties or {}) do
         object[property] = value
     end
+    if Vortex.Font and (object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox")) then
+        pcall(function() object.Font = Vortex.Font end)
+    end
     object.Parent = parent
     return object
 end
@@ -76,12 +92,20 @@ local function stroke(parent, color, transparency, thickness)
 end
 
 local function tween(object, duration, properties, style)
+    local previous = activeTweens[object]
+    if previous then
+        pcall(function() previous:Cancel() end)
+    end
     local animation = TweenService:Create(object, TweenInfo.new(
         duration or 0.2,
         style or Enum.EasingStyle.Quint,
         Enum.EasingDirection.Out
     ), properties)
+    activeTweens[object] = animation
     animation:Play()
+    animation.Completed:Connect(function()
+        if activeTweens[object] == animation then activeTweens[object] = nil end
+    end)
     return animation
 end
 
@@ -118,11 +142,117 @@ end
 function Vortex:SetTheme(theme)
     local selected = typeof(theme) == "table" and theme or self.Themes[theme]
     if not selected then return nil end
+    local previous = self.Theme
     self.Theme = selected
+    local replacements = {
+        [previous.Background] = selected.Background,
+        [previous.Surface] = selected.Surface,
+        [previous.Surface2] = selected.Surface2,
+        [previous.Border] = selected.Border,
+        [previous.Accent] = selected.Accent,
+        [previous.Accent2] = selected.Accent2,
+        [previous.Text] = selected.Text,
+        [previous.Muted] = selected.Muted,
+        [previous.Danger] = selected.Danger,
+    }
+    for _, window in ipairs(self.Windows) do
+        if window.Gui and window.Gui.Parent then
+            for _, object in ipairs(window.Gui:GetDescendants()) do
+                if object:IsA("GuiObject") then
+                    local replacement = replacements[object.BackgroundColor3]
+                    if replacement then object.BackgroundColor3 = replacement end
+                    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                        replacement = replacements[object.TextColor3]
+                        if replacement then object.TextColor3 = replacement end
+                    end
+                elseif object:IsA("UIStroke") then
+                    local replacement = replacements[object.Color]
+                    if replacement then object.Color = replacement end
+                end
+            end
+        end
+    end
     return selected
 end
 
+function Vortex:AddTheme(name, theme)
+    if type(name) ~= "string" or type(theme) ~= "table" then return false end
+    local merged = {}
+    for key, value in pairs(self.Themes.Vortex) do merged[key] = value end
+    for key, value in pairs(theme) do merged[key] = value end
+    self.Themes[name] = merged
+    return true
+end
+
+function Vortex:SetFont(font)
+    for _, window in ipairs(self.Windows) do
+        if window.Gui and window.Gui.Parent then
+            for _, object in ipairs(window.Gui:GetDescendants()) do
+                if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                    pcall(function() object.Font = font end)
+                end
+            end
+        end
+    end
+    self.Font = font
+    return font
+end
+
+function Vortex:IsRunning()
+    local hasNotifications = self._NotificationGui ~= nil and self._NotificationGui.Parent ~= nil
+    return self._Running ~= false and (#self.Windows > 0 or hasNotifications)
+end
+
+function Vortex:GetFlag(name)
+    local control = self.Flags[name]
+    return control and control.Get and control:Get() or nil
+end
+
+function Vortex:SetFlag(name, value)
+    local control = self.Flags[name]
+    if control and control.Set then control:Set(value) return true end
+    return false
+end
+
+local function serializeFlag(value)
+    if typeof(value) == "EnumItem" then
+        return {__type = "Enum", EnumType = tostring(value.EnumType), Name = value.Name}
+    elseif typeof(value) == "Color3" then
+        return {__type = "Color3", R = value.R, G = value.G, B = value.B}
+    end
+    return value
+end
+
+local function deserializeFlag(value)
+    if type(value) == "table" and value.__type == "Color3" then
+        return Color3.new(value.R, value.G, value.B)
+    elseif type(value) == "table" and value.__type == "Enum" then
+        local enumType = Enum[value.EnumType]
+        return enumType and enumType[value.Name] or nil
+    end
+    return value
+end
+
+function Vortex:SaveFlags(name)
+    local values = {}
+    for flagName, control in pairs(self.Flags) do
+        if control and control.Get then values[flagName] = serializeFlag(control:Get()) end
+    end
+    return self:SaveConfig(name or "VortexFlags", values)
+end
+
+function Vortex:LoadFlags(name)
+    local values, err = self:LoadConfig(name or "VortexFlags")
+    if not values then return false, err end
+    for flagName, value in pairs(values) do self:SetFlag(flagName, deserializeFlag(value)) end
+    return true
+end
+
 function Vortex:Notify(title, message, duration)
+    if type(title) == "table" then
+        local config = title
+        title, message, duration = config.Title or config.Name, config.Content or config.Message, config.Duration or duration
+    end
     duration = duration or 3
     local gui = self._NotificationGui
     if not gui or not gui.Parent then
@@ -131,7 +261,7 @@ function Vortex:Notify(title, message, duration)
             ResetOnSpawn = false,
             IgnoreGuiInset = true,
             ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        }, playerGui)
+        }, getPlayerGui())
         self._NotificationGui = gui
         self._NotificationList = make("Frame", {
             AnchorPoint = Vector2.new(1, 0),
@@ -146,9 +276,22 @@ function Vortex:Notify(title, message, duration)
         }, self._NotificationList)
     end
 
+    local notificationFrames = {}
+    for _, child in ipairs(self._NotificationList:GetChildren()) do
+        if child:IsA("Frame") then table.insert(notificationFrames, child) end
+    end
+    while #notificationFrames >= math.max(1, self.NotificationLimit or 5) do
+        local oldest = table.remove(notificationFrames, 1)
+        if oldest then oldest:Destroy() end
+    end
+
     local theme = self.Theme
+    local messageText = tostring(message or "")
+    local notificationFont = self.Font or Enum.Font.Gotham
+    local messageBounds = TextService:GetTextSize(messageText, 11, notificationFont, Vector2.new(270, 1000))
+    local notificationHeight = math.max(64, 42 + messageBounds.Y)
     local holder = make("Frame", {
-        Size = UDim2.new(1, 0, 0, 64),
+        Size = UDim2.new(1, 0, 0, notificationHeight),
         BackgroundTransparency = 1,
     }, self._NotificationList)
     local card = make("Frame", {
@@ -178,11 +321,11 @@ function Vortex:Notify(title, message, duration)
     }, card)
     make("TextLabel", {
         Position = UDim2.fromOffset(14, 29),
-        Size = UDim2.new(1, -24, 0, 27),
+        Size = UDim2.new(1, -24, 0, messageBounds.Y),
         BackgroundTransparency = 1,
-        Text = tostring(message or ""),
+        Text = messageText,
         TextColor3 = theme.Muted,
-        Font = Enum.Font.Gotham,
+        Font = notificationFont,
         TextSize = 11,
         TextWrapped = true,
         TextXAlignment = Enum.TextXAlignment.Left,
@@ -190,7 +333,7 @@ function Vortex:Notify(title, message, duration)
     }, card)
     tween(card, 0.25, {Position = UDim2.new(1, 0, 0, 0)})
     task.delay(duration, function()
-        if not card.Parent then return end
+        if not card.Parent or not card:IsDescendantOf(game) then return end
         local out = tween(card, 0.2, {Position = UDim2.new(1, 330, 0, 0)})
         out.Completed:Wait()
         if holder.Parent then holder:Destroy() end
@@ -205,6 +348,11 @@ function Vortex:CreateWindow(options)
     local subtitle = options.Subtitle or "Owned by Nexxy"
     local width = options.Width or 430
     local height = options.Height or 330
+    local backgroundImage = options.BackgroundImage or options.Image
+    local backgroundTransparency = options.BackgroundImageTransparency
+    if backgroundTransparency == nil then backgroundTransparency = 0.72 end
+    local backgroundTint = options.BackgroundImageColor or Color3.new(1, 1, 1)
+    local backgroundScaleType = options.BackgroundScaleType or Enum.ScaleType.Crop
     local autoSize = options.AutoSize ~= false
     local mobileHeightRatio = math.clamp(options.MobileHeightRatio or 0.78, 0.62, 0.9)
     local mobileAspectRatio = math.clamp(options.MobileAspectRatio or (width / height), 0.72, 1.5)
@@ -238,7 +386,16 @@ function Vortex:CreateWindow(options)
     end
     width, height = responsiveSize(viewport)
 
-    local old = playerGui and playerGui:FindFirstChild("VortexHub")
+    for _, oldWindow in ipairs(self.Windows) do
+        oldWindow._Destroyed = true
+        for _, connection in ipairs(oldWindow._connections or {}) do
+            if connection and connection.Connected then connection:Disconnect() end
+        end
+        if oldWindow.Gui then oldWindow.Gui:Destroy() end
+    end
+    table.clear(self.Windows)
+    table.clear(self.Flags)
+    local old = getPlayerGui():FindFirstChild("VortexHub")
     if old then old:Destroy() end
 
     local gui = make("ScreenGui", {
@@ -247,7 +404,7 @@ function Vortex:CreateWindow(options)
         IgnoreGuiInset = true,
         ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    }, playerGui)
+    }, getPlayerGui())
     local root = make("Frame", {
         Name = "Window",
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -257,6 +414,9 @@ function Vortex:CreateWindow(options)
         BorderSizePixel = 0,
         ClipsDescendants = true,
     }, gui)
+    if self.Scale and self.Scale ~= 1 then
+        make("UIScale", {Name = "VortexScale", Scale = self.Scale}, root)
+    end
     corner(root, 14)
     make("UIGradient", {
         Color = ColorSequence.new({
@@ -266,6 +426,26 @@ function Vortex:CreateWindow(options)
         }),
         Rotation = 135,
     }, root)
+    local background = make("ImageLabel", {
+        Name = "VortexBackground",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Image = backgroundImage or "",
+        ImageColor3 = backgroundTint,
+        ImageTransparency = backgroundTransparency,
+        ScaleType = backgroundScaleType,
+        ZIndex = 0,
+    }, root)
+    corner(background, 14)
+    local backgroundDim = make("Frame", {
+        Name = "VortexBackgroundDim",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = theme.Background,
+        BackgroundTransparency = options.BackgroundDimTransparency or 0.3,
+        BorderSizePixel = 0,
+        ZIndex = 0,
+    }, root)
+    corner(backgroundDim, 14)
     local outline = stroke(root, theme.Border, 0.1, 1.5)
     local gradient = make("UIGradient", {
         Color = ColorSequence.new({
@@ -285,6 +465,7 @@ function Vortex:CreateWindow(options)
     }, root)
     task.spawn(function()
         while scanline.Parent do
+            if not gui.Enabled then task.wait(0.2) continue end
             scanline.Position = UDim2.new(0, 0, 0, -2)
             local pass = tween(scanline, 3.2, {Position = UDim2.new(0, 0, 1, 0)}, Enum.EasingStyle.Linear)
             pass.Completed:Wait()
@@ -293,6 +474,7 @@ function Vortex:CreateWindow(options)
     end)
     local gradientConnection = RunService.RenderStepped:Connect(function(delta)
         if not root.Parent then gradientConnection:Disconnect() return end
+        if not gui.Enabled then return end
         gradient.Rotation = (gradient.Rotation + delta * 35) % 360
     end)
 
@@ -300,6 +482,7 @@ function Vortex:CreateWindow(options)
         Size = UDim2.new(1, 0, 0, 58),
         BackgroundColor3 = theme.Surface,
         BorderSizePixel = 0,
+        ZIndex = 2,
     }, root)
     corner(top, 14)
     make("Frame", {
@@ -319,6 +502,7 @@ function Vortex:CreateWindow(options)
         TextXAlignment = Enum.TextXAlignment.Left,
     }, top)
     make("TextLabel", {
+        Name = "VortexAuthor",
         Position = UDim2.fromOffset(17, 31),
         Size = UDim2.new(1, -110, 0, 16),
         BackgroundTransparency = 1,
@@ -354,10 +538,16 @@ function Vortex:CreateWindow(options)
     corner(close, 6)
     animateButton(close, theme.Danger, Color3.fromRGB(255, 110, 125))
 
-    local tabBar = make("Frame", {
+    local tabBar = make("ScrollingFrame", {
         Position = UDim2.fromOffset(12, 66),
         Size = UDim2.new(1, -24, 0, 34),
         BackgroundTransparency = 1,
+        ZIndex = 2,
+        BorderSizePixel = 0,
+        AutomaticCanvasSize = Enum.AutomaticSize.X,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        ScrollingDirection = Enum.ScrollingDirection.X,
+        ScrollBarThickness = 0,
     }, root)
     make("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
@@ -369,6 +559,7 @@ function Vortex:CreateWindow(options)
         Size = UDim2.new(1, -24, 1, -120),
         BackgroundTransparency = 1,
         ClipsDescendants = true,
+        ZIndex = 2,
     }, root)
 
     local window = {
@@ -382,6 +573,29 @@ function Vortex:CreateWindow(options)
         _connections = {gradientConnection},
     }
     table.insert(self.Windows, window)
+    function window:Track(connection)
+        if connection then table.insert(self._connections, connection) end
+        return connection
+    end
+
+    window.Background = background
+    window.BackgroundDim = backgroundDim
+    function window:SetBackground(image, transparency, tint, scaleType)
+        self.Background.Image = image or ""
+        if transparency ~= nil then self.Background.ImageTransparency = math.clamp(transparency, 0, 1) end
+        if tint then self.Background.ImageColor3 = tint end
+        if scaleType then self.Background.ScaleType = scaleType end
+        return self.Background
+    end
+    function window:SetBackgroundTransparency(value)
+        self.Background.ImageTransparency = math.clamp(value or 0, 0, 1)
+    end
+    function window:SetBackgroundDim(value)
+        self.BackgroundDim.BackgroundTransparency = math.clamp(value or 0, 0, 1)
+    end
+    function window:RemoveBackground()
+        self.Background.Image = ""
+    end
 
     window.Device = device
     window.AutoSize = autoSize
@@ -409,6 +623,7 @@ function Vortex:CreateWindow(options)
     tween(root, 0.38, {Size = window.NormalSize, BackgroundTransparency = 0}, Enum.EasingStyle.Back)
 
     local dragging = false
+    local dragBlocked = false
     local dragStart, startPosition, dragTarget
     local dragSmoothing = RunService.RenderStepped:Connect(function()
         if dragging and dragTarget then
@@ -417,24 +632,27 @@ function Vortex:CreateWindow(options)
     end)
     table.insert(window._connections, dragSmoothing)
     top.InputBegan:Connect(function(input)
-        if signal(input) then
+        if signal(input) and not dragBlocked then
             dragging = true
             dragStart = input.Position
             startPosition = root.Position
             dragTarget = root.Position
         end
     end)
-    UserInputService.InputChanged:Connect(function(input)
+    window:Track(UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
             dragTarget = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
         end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
+    end))
+    window:Track(UserInputService.InputEnded:Connect(function(input)
         if signal(input) then dragging = false dragTarget = nil end
-    end)
+    end))
 
     local minimized = false
+    minimize.InputBegan:Connect(function(input) if signal(input) then dragBlocked = true end end)
+    close.InputBegan:Connect(function(input) if signal(input) then dragBlocked = true end end)
+    window:Track(UserInputService.InputEnded:Connect(function(input) if signal(input) then dragBlocked = false end end))
     minimize.MouseButton1Click:Connect(function()
         minimized = not minimized
         window:Minimize(minimized)
@@ -442,14 +660,18 @@ function Vortex:CreateWindow(options)
     close.MouseButton1Click:Connect(function() window:Destroy() end)
 
     function window:Destroy()
+        if self._Destroyed then return end
+        self._Destroyed = true
         self.IsOpen = false
         for _, connection in ipairs(self._connections) do
             if connection and connection.Connected then connection:Disconnect() end
         end
         if self.Gui then
             local closing = tween(self.Root, 0.2, {Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1})
-            closing.Completed:Wait()
-            if self.Gui then self.Gui:Destroy() end
+            local guiToDestroy = self.Gui
+            closing.Completed:Connect(function()
+                if guiToDestroy.Parent and self._Destroyed then guiToDestroy:Destroy() end
+            end)
         end
         for index, item in ipairs(Vortex.Windows) do
             if item == self then table.remove(Vortex.Windows, index) break end
@@ -457,17 +679,21 @@ function Vortex:CreateWindow(options)
     end
 
     function window:Open()
+        if self._Destroyed or (self.IsOpen and self.Root.Visible) then return end
         self.IsOpen = true
         self.Gui.Enabled = true
         self.Root.Visible = true
+        scanline.Visible = true
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize, BackgroundTransparency = 0}, Enum.EasingStyle.Back)
     end
 
     function window:Close()
+        if self._Destroyed or (not self.IsOpen and not self.Root.Visible) then return end
         self.IsOpen = false
+        scanline.Visible = false
         local closing = tween(self.Root, 0.22, {Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1}, Enum.EasingStyle.Quint)
         closing.Completed:Connect(function()
-            if self.Gui then self.Gui.Enabled = false end
+            if not self.IsOpen and self.Gui then self.Gui.Enabled = false end
         end)
     end
 
@@ -500,6 +726,80 @@ function Vortex:CreateWindow(options)
 
     function window:SetTitle(value)
         setText(titleLabel, value)
+    end
+
+    function window:SetAuthor(value)
+        local authorLabel = top:FindFirstChild("VortexAuthor")
+        if not authorLabel then
+            authorLabel = make("TextLabel", {Name = "VortexAuthor", Position = UDim2.fromOffset(17, 31), Size = UDim2.new(1, -110, 0, 16), BackgroundTransparency = 1, TextColor3 = theme.Muted, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left}, top)
+        end
+        authorLabel.Text = tostring(value or "")
+        return authorLabel
+    end
+
+    function window:SetPanelBackground(visible)
+        top.BackgroundTransparency = visible == false and 1 or 0
+        return visible ~= false
+    end
+
+    function window:Dialog(dialogOptions)
+        dialogOptions = dialogOptions or {}
+        local overlay = make("Frame", {Name = "VortexDialog", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, ZIndex = 50}, root)
+        local card = make("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.54), Size = UDim2.new(0.86, 0, 0, 150), BackgroundColor3 = theme.Surface, BackgroundTransparency = 1, ZIndex = 51}, overlay)
+        corner(card, 12)
+        stroke(card, theme.Accent, 0.2, 1)
+        local titleObject = make("TextLabel", {Position = UDim2.fromOffset(16, 14), Size = UDim2.new(1, -32, 0, 22), BackgroundTransparency = 1, Text = tostring(dialogOptions.Title or "Vortex Hub"), TextColor3 = theme.Text, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52}, card)
+        local messageObject = make("TextLabel", {Position = UDim2.fromOffset(16, 42), Size = UDim2.new(1, -32, 0, 52), BackgroundTransparency = 1, Text = tostring(dialogOptions.Content or dialogOptions.Message or ""), TextColor3 = theme.Muted, Font = Enum.Font.Gotham, TextSize = 11, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 52}, card)
+        local actions = make("Frame", {Position = UDim2.new(0, 16, 1, -44), Size = UDim2.new(1, -32, 0, 30), BackgroundTransparency = 1, ZIndex = 52}, card)
+        make("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 7)}, actions)
+        local dialog = {Object = overlay, Title = titleObject, Message = messageObject}
+        local function close(result)
+            if dialog.Closed then return end
+            dialog.Closed = true
+            local out = tween(card, 0.16, {Position = UDim2.fromScale(0.5, 0.54), BackgroundTransparency = 1})
+            tween(overlay, 0.16, {BackgroundTransparency = 1})
+            out.Completed:Connect(function() if overlay.Parent then overlay:Destroy() end end)
+            if dialogOptions.Callback then task.spawn(dialogOptions.Callback, result) end
+        end
+        for _, action in ipairs(dialogOptions.Actions or {{Name = "Close", Value = false}}) do
+            local actionButton = make("TextButton", {Size = UDim2.fromOffset(action.Width or 78, 30), BackgroundColor3 = action.Primary and theme.Accent or theme.Surface2, Text = tostring(action.Name or "OK"), TextColor3 = theme.Text, Font = Enum.Font.GothamMedium, TextSize = 10, AutoButtonColor = false, ZIndex = 53}, actions)
+            corner(actionButton, 7)
+            animateButton(actionButton, action.Primary and theme.Accent or theme.Surface2, theme.Accent2)
+            actionButton.MouseButton1Click:Connect(function() close(action.Value == nil and action.Name or action.Value) end)
+        end
+        tween(overlay, 0.2, {BackgroundTransparency = 0.38})
+        tween(card, 0.26, {Position = UDim2.fromScale(0.5, 0.5), BackgroundTransparency = 0}, Enum.EasingStyle.Back)
+        function dialog:Close(result) close(result) end
+        return dialog
+    end
+
+    window.Popup = window.Dialog
+
+    function window:Tooltip(target, text)
+        if not target or not target:IsA("GuiObject") then return nil end
+        local tip = make("TextLabel", {Name = "VortexTooltip", AutomaticSize = Enum.AutomaticSize.XY, BackgroundColor3 = theme.Surface, Text = tostring(text or ""), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, Visible = false, ZIndex = 100}, gui)
+        corner(tip, 6)
+        stroke(tip, theme.Accent, 0.35, 1)
+        make("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5)}, tip)
+        local hovered = false
+        local function place()
+            local camera = workspace.CurrentCamera
+            local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+            local x = math.clamp(target.AbsolutePosition.X, 6, math.max(6, viewport.X - tip.AbsoluteSize.X - 6))
+            local above = target.AbsolutePosition.Y - tip.AbsoluteSize.Y - 6
+            local below = target.AbsolutePosition.Y + target.AbsoluteSize.Y + 6
+            local y = above >= 6 and above or math.min(below, viewport.Y - tip.AbsoluteSize.Y - 6)
+            tip.Position = UDim2.fromOffset(x, math.max(6, y))
+        end
+        window:Track(target.MouseEnter:Connect(function() hovered = true tip.Visible = true place() tween(tip, 0.15, {TextTransparency = 0}) end))
+        window:Track(target.MouseLeave:Connect(function()
+            hovered = false
+            tween(tip, 0.12, {TextTransparency = 1}).Completed:Connect(function()
+                if hovered or not tip.Parent then return end
+                tip.Visible = false
+            end)
+        end))
+        return tip
     end
 
     function window:SelectTab(tab)
@@ -567,16 +867,19 @@ function Vortex:CreateWindow(options)
         local tab = {Window = self, Name = tabName, Button = button, Page = page, Elements = {}}
         table.insert(self.Tabs, tab)
         button.MouseButton1Click:Connect(function() self:SelectTab(tab) end)
-        animateButton(button, theme.Surface2, theme.Border)
         button.MouseEnter:Connect(function()
-            if self.CurrentTab ~= tab then tween(button, 0.12, {BackgroundColor3 = theme.Border, TextColor3 = theme.Text}) end
+            if self.CurrentTab ~= tab then tween(button, 0.14, {BackgroundColor3 = theme.Border, TextColor3 = theme.Text}) end
         end)
         button.MouseLeave:Connect(function()
-            if self.CurrentTab ~= tab then tween(button, 0.12, {BackgroundColor3 = theme.Surface2, TextColor3 = theme.Muted}) end
+            if self.CurrentTab ~= tab then tween(button, 0.18, {BackgroundColor3 = theme.Surface2, TextColor3 = theme.Muted}) end
         end)
         if #self.Tabs == 1 then self:SelectTab(tab) end
 
         function tab:AddSection(name, description)
+            if type(name) == "table" then
+                local config = name
+                name, description = config.Name or "Section", config.Description or config.Content
+            end
             local frame = make("Frame", {
                 Size = UDim2.new(1, 0, 0, description and 44 or 25),
                 BackgroundTransparency = 1,
@@ -621,6 +924,14 @@ function Vortex:CreateWindow(options)
         end
 
         function tab:AddButton(text, callback)
+            local flagName
+            local once = false
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                once = config.Once == true or config.OneTime == true
+                text, callback = config.Name or "Button", config.Callback or callback
+            end
             local buttonFrame = make("TextButton", {
                 Size = UDim2.new(1, 0, 0, 36),
                 BackgroundColor3 = theme.Surface,
@@ -633,11 +944,43 @@ function Vortex:CreateWindow(options)
             corner(buttonFrame, 8)
             stroke(buttonFrame, theme.Border, 0.35, 1)
             animateButton(buttonFrame, theme.Surface, theme.Surface2)
-            buttonFrame.MouseButton1Click:Connect(function() if callback then task.spawn(callback) end end)
+            local clicked = false
+            onceButtonStates[buttonFrame] = function(reset)
+                clicked = reset ~= false
+                if not clicked then buttonFrame.TextTransparency = 0 end
+            end
+            buttonFrame.MouseButton1Click:Connect(function()
+                if once and clicked then return end
+                clicked = true
+                if once then
+                    buttonFrame.AutoButtonColor = false
+                    buttonFrame.TextTransparency = 0.35
+                end
+                if callback then task.spawn(callback) end
+            end)
+            if flagName then Vortex.Flags[flagName] = {Object = buttonFrame, Set = function(_, value) buttonFrame.Text = tostring(value or "") end} end
             return buttonFrame
         end
 
+        function tab:ResetButton(button)
+            if onceButtonStates[button] then onceButtonStates[button](false) end
+        end
+
+        function tab:AddOnceButton(text, callback)
+            if type(text) == "table" then
+                text.Once = true
+                return self:AddButton(text)
+            end
+            return self:AddButton({Name = text, Callback = callback, Once = true})
+        end
+
         function tab:AddToggle(text, default, callback)
+            local flagName
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                text, default, callback = config.Name or "Toggle", config.Default == true, config.Callback or callback
+            end
             local value = default == true
             local buttonFrame = make("TextButton", {
                 Size = UDim2.new(1, 0, 0, 40),
@@ -673,10 +1016,20 @@ function Vortex:CreateWindow(options)
             end
             buttonFrame.MouseButton1Click:Connect(function() value = not value update(true) end)
             update(false)
-            return {Object = buttonFrame, Get = function() return value end, Set = function(_, newValue) value = newValue == true update(true) end}
+            local control = {Object = buttonFrame, Get = function() return value end, Set = function(_, newValue) value = newValue == true update(true) end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddSlider(text, minimum, maximum, default, callback)
+            local flagName
+            local valueName = ""
+            local increment = 1
+            if type(text) == "table" then
+                local config = text
+                flagName, valueName, increment = config.Flag, config.ValueName or "", config.Increment or 1
+                text, minimum, maximum, default, callback = config.Name or "Slider", config.Min or 0, config.Max or 100, config.Default or config.Min or 0, config.Callback or callback
+            end
             minimum, maximum = minimum or 0, maximum or 100
             local value = math.clamp(default or minimum, minimum, maximum)
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 52), BackgroundColor3 = theme.Surface}, page)
@@ -690,30 +1043,62 @@ function Vortex:CreateWindow(options)
             corner(fill, 3)
             local draggingSlider = false
             local function setValueFromX(x, call)
-                local ratio = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
-                value = math.floor(minimum + (maximum - minimum) * ratio + 0.5)
-                valueLabel.Text = tostring(value)
-                fill.Size = UDim2.fromScale(ratio, 1)
+                if track.AbsoluteSize.X <= 0 then return end
+                local ratio = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+                value = math.floor((minimum + (maximum - minimum) * ratio) / increment + 0.5) * increment
+                value = math.clamp(value, minimum, maximum)
+                valueLabel.Text = tostring(value) .. valueName
+                local snappedRatio = (value - minimum) / math.max(1, maximum - minimum)
+                fill.Size = UDim2.fromScale(snappedRatio, 1)
                 if call and callback then task.spawn(callback, value) end
             end
-            track.InputBegan:Connect(function(input) if signal(input) then draggingSlider = true setValueFromX(input.Position.X, true) end end)
-            UserInputService.InputChanged:Connect(function(input) if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then setValueFromX(input.Position.X, true) end end)
-            UserInputService.InputEnded:Connect(function(input) if signal(input) then draggingSlider = false end end)
-            return {Object = frame, Get = function() return value end, Set = function(_, newValue) value = math.clamp(newValue, minimum, maximum) setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(1, maximum - minimum)) * track.AbsoluteSize.X, true) end}
+            local function beginSlider(input) if signal(input) then draggingSlider = true setValueFromX(input.Position.X, true) end end
+            track.InputBegan:Connect(beginSlider)
+            fill.InputBegan:Connect(beginSlider)
+            tab.Window:Track(UserInputService.InputChanged:Connect(function(input) if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then setValueFromX(input.Position.X, true) end end))
+            tab.Window:Track(UserInputService.InputEnded:Connect(function(input) if signal(input) then draggingSlider = false end end))
+            local control = {Object = frame, Get = function() return value end, Set = function(_, newValue)
+                value = math.clamp(newValue, minimum, maximum)
+                if track.AbsoluteSize.X <= 0 then
+                    task.defer(function()
+                        if track.Parent and track.AbsoluteSize.X > 0 then setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(1, maximum - minimum)) * track.AbsoluteSize.X, true) end
+                    end)
+                else
+                    setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(1, maximum - minimum)) * track.AbsoluteSize.X, true)
+                end
+            end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddTextbox(text, placeholder, callback)
+            local flagName
+            local defaultValue = ""
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                defaultValue = tostring(config.Default or "")
+                text, placeholder, callback = config.Name or "Input", config.Placeholder or "Type here...", config.Callback or callback
+            end
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = theme.Surface}, page)
             corner(frame, 8)
             stroke(frame, theme.Border, 0.35, 1)
             make("TextLabel", {Position = UDim2.fromOffset(12, 0), Size = UDim2.new(0.42, 0, 1, 0), BackgroundTransparency = 1, Text = tostring(text or "Input"), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left}, frame)
-            local box = make("TextBox", {Position = UDim2.new(0.44, 0, 0.5, -14), Size = UDim2.new(0.52, -8, 0, 28), BackgroundColor3 = theme.Background, Text = "", PlaceholderText = placeholder or "Type here...", PlaceholderColor3 = theme.Muted, TextColor3 = theme.Text, Font = Enum.Font.Code, TextSize = 11, ClearTextOnFocus = false}, frame)
+            local box = make("TextBox", {Position = UDim2.new(0.44, 0, 0.5, -14), Size = UDim2.new(0.52, -8, 0, 28), BackgroundColor3 = theme.Background, Text = defaultValue, PlaceholderText = placeholder or "Type here...", PlaceholderColor3 = theme.Muted, TextColor3 = theme.Text, Font = Enum.Font.Code, TextSize = 11, ClearTextOnFocus = false}, frame)
             corner(box, 6)
             box.FocusLost:Connect(function(enterPressed) if callback then task.spawn(callback, box.Text, enterPressed) end end)
-            return {Object = box, Get = function() return box.Text end, Set = function(_, value) box.Text = tostring(value or "") end}
+            local control = {Object = box, Get = function() return box.Text end, Set = function(_, value) box.Text = tostring(value or "") end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddDropdown(text, options, default, callback)
+            local flagName
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                text, options, default, callback = config.Name or "Dropdown", config.Options or {}, config.Default, config.Callback or callback
+            end
             options = options or {}
             local selected = default or options[1] or "Select"
             local open = false
@@ -740,13 +1125,33 @@ function Vortex:CreateWindow(options)
                 open = not open
                 frame.Size = UDim2.new(1, 0, 0, open and 48 + #options * 27 or 44)
             end)
-            return {Object = frame, Get = function() return selected end, Set = function(_, value) selected = value button.Text = tostring(text or "Dropdown") .. ": " .. tostring(selected) if callback then task.spawn(callback, selected) end end}
+            tab.Window:Track(UserInputService.InputBegan:Connect(function(input)
+                if open and signal(input) then
+                    local position = input.Position
+                    local bounds = frame.AbsolutePosition
+                    local size = frame.AbsoluteSize
+                    if position.X < bounds.X or position.X > bounds.X + size.X or position.Y < bounds.Y or position.Y > bounds.Y + size.Y then
+                        open = false
+                        frame.Size = UDim2.new(1, 0, 0, 44)
+                    end
+                end
+            end))
+            local control = {Object = frame, Get = function() return selected end, Set = function(_, value) selected = value button.Text = tostring(text or "Dropdown") .. ": " .. tostring(selected) if callback then task.spawn(callback, selected) end end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddMultiDropdown(text, options, defaults, callback)
+            local flagName
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                text, options, defaults, callback = config.Name or "Multi-select", config.Options or {}, config.Default or config.Values, config.Callback or callback
+            end
             options = options or {}
             local selected = {}
             for _, value in ipairs(defaults or {}) do selected[value] = true end
+            local open = false
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = theme.Surface, ClipsDescendants = true}, page)
             corner(frame, 8)
             stroke(frame, theme.Border, 0.35, 1)
@@ -756,15 +1161,20 @@ function Vortex:CreateWindow(options)
             local list = make("Frame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, #options * 27), BackgroundColor3 = theme.Surface2}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
+            local optionButtons = {}
             local function refresh(call)
                 local names = {}
                 for _, value in ipairs(options) do if selected[value] then table.insert(names, tostring(value)) end end
                 button.Text = tostring(text or "Multi-select") .. ": " .. (#names > 0 and table.concat(names, ", ") or "None")
+                for value, optionButton in pairs(optionButtons) do
+                    optionButton.Text = (selected[value] and "■  " or "□  ") .. tostring(value)
+                end
                 if call and callback then task.spawn(callback, selected) end
             end
             for _, option in ipairs(options) do
                 local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
                 make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, optionButton)
+                optionButtons[option] = optionButton
                 optionButton.MouseButton1Click:Connect(function()
                     selected[option] = not selected[option]
                     optionButton.Text = (selected[option] and "■  " or "□  ") .. tostring(option)
@@ -772,15 +1182,48 @@ function Vortex:CreateWindow(options)
                 end)
             end
             button.MouseButton1Click:Connect(function()
-                local open = frame.Size.Y.Offset == 44
+                open = not open
                 frame.Size = UDim2.new(1, 0, 0, open and 48 + #options * 27 or 44)
             end)
+            tab.Window:Track(UserInputService.InputBegan:Connect(function(input)
+                if open and signal(input) then
+                    local position = input.Position
+                    local bounds = frame.AbsolutePosition
+                    local size = frame.AbsoluteSize
+                    if position.X < bounds.X or position.X > bounds.X + size.X or position.Y < bounds.Y or position.Y > bounds.Y + size.Y then
+                        open = false
+                        frame.Size = UDim2.new(1, 0, 0, 44)
+                    end
+                end
+            end))
             refresh(false)
-            return {Object = frame, Get = function() return selected end, Set = function(_, values) selected = values or {} refresh(true) end}
+            local control = {Object = frame, Get = function() return selected end, GetArray = function()
+                local values = {}
+                for _, option in ipairs(options) do if selected[option] then table.insert(values, option) end end
+                return values
+            end, Set = function(_, values)
+                selected = {}
+                if type(values) == "table" then
+                    for key, item in pairs(values) do
+                        if type(key) == "number" then selected[item] = true else selected[key] = item == true end
+                    end
+                end
+                refresh(true)
+            end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddKeybind(text, default, callback)
-            local bind = default or Enum.KeyCode.Unknown
+            local flagName
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                text, default, callback = config.Name or "Keybind", config.Default or config.Key, config.Callback or callback
+            end
+            local bind = default
+            if type(bind) == "string" then bind = Enum.KeyCode[bind] end
+            if typeof(bind) ~= "EnumItem" or bind.EnumType ~= Enum.KeyCode then bind = Enum.KeyCode.Unknown end
             local listening = false
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = theme.Surface}, page)
             corner(frame, 8)
@@ -789,24 +1232,52 @@ function Vortex:CreateWindow(options)
             local keyButton = make("TextButton", {Position = UDim2.new(1, -74, 0.5, -12), Size = UDim2.fromOffset(62, 24), BackgroundColor3 = theme.Background, Text = bind.Name, TextColor3 = theme.Accent2, Font = Enum.Font.Code, TextSize = 10, AutoButtonColor = false}, frame)
             corner(keyButton, 6)
             keyButton.MouseButton1Click:Connect(function() listening = true keyButton.Text = "Press key" end)
-            UserInputService.InputBegan:Connect(function(input, processed)
+            tab.Window:Track(UserInputService.InputBegan:Connect(function(input, processed)
                 if listening and input.UserInputType == Enum.UserInputType.Keyboard then
+                    if input.KeyCode == Enum.KeyCode.Escape then
+                        listening = false
+                        keyButton.Text = bind.Name
+                        return
+                    end
                     bind, listening = input.KeyCode, false
                     keyButton.Text = bind.Name
-                elseif not processed and input.KeyCode == bind and callback then
+                elseif not processed and bind ~= Enum.KeyCode.Unknown and input.KeyCode == bind and callback then
                     task.spawn(callback, bind)
                 end
-            end)
-            return {Object = frame, Get = function() return bind end, Set = function(_, value) bind = value keyButton.Text = bind.Name end}
+            end))
+            local control = {Object = frame, Get = function() return bind end, Set = function(_, value)
+                if type(value) == "string" then value = Enum.KeyCode[value] end
+                if typeof(value) == "EnumItem" and value.EnumType == Enum.KeyCode then bind = value end
+                keyButton.Text = bind.Name
+            end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddParagraph(titleText, bodyText)
-            local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 62), BackgroundColor3 = theme.Surface}, page)
+            local bodyValue = tostring(bodyText or "")
+            local bodyHeight = 30
+            local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 32 + bodyHeight), BackgroundColor3 = theme.Surface}, page)
             corner(frame, 8)
             stroke(frame, theme.Border, 0.35, 1)
             make("TextLabel", {Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -24, 0, 17), BackgroundTransparency = 1, Text = tostring(titleText or "Information"), TextColor3 = theme.Text, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left}, frame)
-            local body = make("TextLabel", {Position = UDim2.fromOffset(12, 26), Size = UDim2.new(1, -24, 0, 30), BackgroundTransparency = 1, Text = tostring(bodyText or ""), TextColor3 = theme.Muted, Font = Enum.Font.Gotham, TextSize = 10, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, frame)
-            return {Object = frame, Set = function(_, value) body.Text = tostring(value or "") end}
+            local body = make("TextLabel", {Position = UDim2.fromOffset(12, 26), Size = UDim2.new(1, -24, 0, bodyHeight), BackgroundTransparency = 1, Text = bodyValue, TextColor3 = theme.Muted, Font = Enum.Font.Gotham, TextSize = 10, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, frame)
+            local resizing = false
+            local function resizeParagraph(value)
+                if resizing then return end
+                resizing = true
+                local availableWidth = math.max(80, frame.AbsoluteSize.X - 24)
+                local nextHeight = math.max(30, TextService:GetTextSize(value, 10, Enum.Font.Gotham, Vector2.new(availableWidth, 1000)).Y)
+                body.Text = value
+                body.Size = UDim2.new(1, -24, 0, nextHeight)
+                frame.Size = UDim2.new(1, 0, 0, 32 + nextHeight)
+                resizing = false
+            end
+            frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                if body.Parent then resizeParagraph(body.Text) end
+            end)
+            task.defer(function() if body.Parent then resizeParagraph(bodyValue) end end)
+            return {Object = frame, Set = function(_, value) resizeParagraph(tostring(value or "")) end}
         end
 
         function tab:AddDivider()
@@ -863,7 +1334,17 @@ function Vortex:CreateWindow(options)
             return search
         end
 
+        function tab:AddTooltip(target, text)
+            return self.Window:Tooltip(target, text)
+        end
+
         function tab:AddColorPicker(text, default, callback)
+            local flagName
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                text, default, callback = config.Name or "Color", config.Default or config.Color, config.Callback or callback
+            end
             local color = default or theme.Accent
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = theme.Surface}, page)
             corner(frame, 8)
@@ -880,7 +1361,16 @@ function Vortex:CreateWindow(options)
                 tween(swatch, 0.18, {BackgroundColor3 = color})
                 if callback then task.spawn(callback, color) end
             end)
-            return {Object = frame, Get = function() return color end, Set = function(_, value) color = value swatch.BackgroundColor3 = color if callback then task.spawn(callback, color) end end}
+            local control = {Object = frame, Get = function() return color end, Set = function(_, value)
+                color = value
+                for position, paletteColor in ipairs(palette) do
+                    if paletteColor == color then index = position break end
+                end
+                swatch.BackgroundColor3 = color
+                if callback then task.spawn(callback, color) end
+            end}
+            if flagName then Vortex.Flags[flagName] = control end
+            return control
         end
 
         function tab:AddCheckbox(text, default, callback)
@@ -891,6 +1381,13 @@ function Vortex:CreateWindow(options)
             options = options or {}
             local selected = default or options[1]
             local group = {Items = {}, Get = function() return selected end}
+            local function refresh()
+                for _, entry in ipairs(group.Items) do
+                    local active = entry.Value == selected
+                    entry.Object.Text = (active and "●  " or "○  ") .. tostring(entry.Value)
+                    entry.Object.TextColor3 = active and theme.Accent2 or theme.Text
+                end
+            end
             for _, option in ipairs(options) do
                 local item = make("TextButton", {Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = theme.Surface, Text = "○  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, page)
                 corner(item, 7)
@@ -898,13 +1395,22 @@ function Vortex:CreateWindow(options)
                 table.insert(group.Items, {Value = option, Object = item})
                 item.MouseButton1Click:Connect(function()
                     selected = option
-                    for _, entry in ipairs(group.Items) do
-                        entry.Object.Text = (entry.Value == selected and "●  " or "○  ") .. tostring(entry.Value)
-                        entry.Object.TextColor3 = entry.Value == selected and theme.Accent2 or theme.Text
-                    end
+                    refresh()
                     if callback then task.spawn(callback, selected) end
                 end)
             end
+            function group:Set(value)
+                for _, entry in ipairs(group.Items) do
+                    if entry.Value == value then
+                        selected = value
+                        refresh()
+                        if callback then task.spawn(callback, selected) end
+                        return true
+                    end
+                end
+                return false
+            end
+            refresh()
             return group
         end
 
@@ -914,7 +1420,7 @@ function Vortex:CreateWindow(options)
             corner(frame, 8)
             local header = make("TextButton", {Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Text = tostring(text or "List") .. "  ▼", TextColor3 = theme.Text, Font = Enum.Font.GothamMedium, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, frame)
             make("UIPadding", {PaddingLeft = UDim.new(0, 12)}, header)
-            local body = make("ScrollingFrame", {Position = UDim2.fromOffset(8, 38), Size = UDim2.new(1, -16, 0, math.min(130, #items * 27)), BackgroundColor3 = theme.Background, BorderSizePixel = 0, ScrollBarThickness = 2, CanvasSize = UDim2.new(0, 0, 0, #items * 27)}, frame)
+            local body = make("ScrollingFrame", {Position = UDim2.fromOffset(8, 38), Size = UDim2.new(1, -16, 0, math.min(130, #items * 27)), BackgroundColor3 = theme.Background, BorderSizePixel = 0, ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.Y, CanvasSize = UDim2.new(0, 0, 0, #items * 27)}, frame)
             corner(body, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, body)
             for _, value in ipairs(items) do
@@ -928,7 +1434,22 @@ function Vortex:CreateWindow(options)
                 header.Text = tostring(text or "List") .. (open and "  ▲" or "  ▼")
                 frame.Size = UDim2.new(1, 0, 0, open and 44 + math.min(130, #items * 27) or 34)
             end)
-            return {Object = frame, Refresh = function(_, newItems) for _, child in ipairs(body:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end for _, value in ipairs(newItems or {}) do local item = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = tostring(value), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, body) make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, item) item.MouseButton1Click:Connect(function() if callback then task.spawn(callback, value) end end) end end}
+            local control = {Object = frame}
+            function control:Refresh(newItems)
+                newItems = newItems or {}
+                for _, child in ipairs(body:GetChildren()) do
+                    if child:IsA("TextButton") then child:Destroy() end
+                end
+                for _, value in ipairs(newItems) do
+                    local item = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = tostring(value), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, body)
+                    make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, item)
+                    item.MouseButton1Click:Connect(function() if callback then task.spawn(callback, value) end end)
+                end
+                body.CanvasSize = UDim2.fromOffset(0, #newItems * 27)
+                if open then frame.Size = UDim2.new(1, 0, 0, 44 + math.min(130, #newItems * 27)) end
+                header.Text = tostring(text or "List") .. (open and "  ▲" or "  ▼")
+            end
+            return control
         end
 
         function tab:AddSpacer(height)
@@ -937,6 +1458,8 @@ function Vortex:CreateWindow(options)
 
         -- Naming aliases used by the other common Roblox UI library styles.
         tab.CreateButton = tab.AddButton
+        tab.CreateOnceButton = tab.AddOnceButton
+        tab.AddOneTimeButton = tab.AddOnceButton
         tab.CreateToggle = tab.AddToggle
         tab.CreateSlider = tab.AddSlider
         tab.CreateDropdown = tab.AddDropdown
@@ -960,10 +1483,35 @@ function Vortex:CreateWindow(options)
         return self:AddTab({Name = name})
     end
 
+    function window:CreateSearchTab(name, placeholder)
+        local tab = self:AddTab({Name = name or "Search"})
+        local search = tab:AddSearchbox(placeholder or "Search this tab...")
+        local contentLayout = tab.Page:FindFirstChildOfClass("UIListLayout")
+        search.Object:GetPropertyChangedSignal("Text"):Connect(function()
+            local query = string.lower(search.Object.Text or "")
+            for _, child in ipairs(tab.Page:GetChildren()) do
+                if child:IsA("GuiObject") and child ~= search.Object and child ~= contentLayout then
+                    local text
+                    if (child:IsA("TextLabel") or child:IsA("TextButton")) and child.Text ~= "" then
+                        text = string.lower(child.Text or "")
+                    else
+                        local label = child:FindFirstChildWhichIsA("TextLabel") or child:FindFirstChildWhichIsA("TextButton")
+                        text = label and string.lower(label.Text or "") or string.lower(child.Name)
+                    end
+                    child.Visible = query == "" or string.find(text, query, 1, true) ~= nil
+                end
+            end
+        end)
+        return tab
+    end
+
     window.NewSection = window.AddTab
     window.CreateSection = window.AddTab
     window.CreatePage = window.AddTab
     window.AddPage = window.AddTab
+    window.CreateSearchPage = window.CreateSearchTab
+    window.SetBackgroundImage = window.SetBackground
+    window.SetBackgroundImageTransparency = window.SetBackgroundTransparency
 
     return window
 end
@@ -977,8 +1525,11 @@ function Vortex:SendNotification(title, message, duration)
 end
 
 function Vortex:DestroyAll()
-    for _, window in ipairs(self.Windows) do
-        if window and window.Destroy then window:Destroy() end
+    for index = #self.Windows, 1, -1 do
+        local window = self.Windows[index]
+        if window and window.Destroy then
+            task.spawn(function() window:Destroy() end)
+        end
     end
     table.clear(self.Windows)
 end
