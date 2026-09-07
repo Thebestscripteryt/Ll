@@ -822,16 +822,9 @@ function Vortex:CreateWindow(options)
         ZIndex = 2,
     }, root)
 
-    local tabBarLine = make("Frame", {
-        Name = "VortexTabBarLine",
-        Position = UDim2.new(0, 12, 0, 103),
-        Size = UDim2.new(1, -24, 0, 2),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BorderSizePixel = 0,
-        ZIndex = 2,
-    }, root)
-    corner(tabBarLine, 1)
-    local tabBarGradient = make("UIGradient", {
+    local tabBarOutline = stroke(tabBar, theme.Border, 0.15, 1)
+    corner(tabBar, 8)
+    local tabBarOutlineGradient = make("UIGradient", {
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
             ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
@@ -841,11 +834,11 @@ function Vortex:CreateWindow(options)
             ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
             ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
         }),
-    }, tabBarLine)
+    }, tabBarOutline)
     local rainbowConnection = RunService.RenderStepped:Connect(function(delta)
-        if not tabBarLine.Parent then rainbowConnection:Disconnect() return end
+        if not tabBarOutline.Parent then rainbowConnection:Disconnect() return end
         if not gui.Enabled then return end
-        tabBarGradient.Offset = Vector2.new((tabBarGradient.Offset.X + delta * 0.35) % 1, 0)
+        tabBarOutlineGradient.Rotation = (tabBarOutlineGradient.Rotation + delta * 60) % 360
     end)
 
     local window = {
@@ -1042,7 +1035,6 @@ function Vortex:CreateWindow(options)
         self.IsMinimized = value == true
         tabBar.Visible = not self.IsMinimized
         content.Visible = not self.IsMinimized
-        tabBarLine.Visible = not self.IsMinimized
         minimize.Text = self.IsMinimized and "+" or "—"
         topRepair.Visible = not self.IsMinimized
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize}, Enum.EasingStyle.Quint)
