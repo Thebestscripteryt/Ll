@@ -86,19 +86,6 @@ Vortex.Themes = {
     },
 }
 
--- Built-in monochrome assets from icons.rest (Lucide-style Roblox uploads).
-Vortex.Icons = {
-    close = "rbxassetid://85345725497834",
-    close_circle = "rbxassetid://116396312853810",
-    minimize = "rbxassetid://96294437144715",
-    plus = "rbxassetid://114634662672913",
-    check = "rbxassetid://84978679477516",
-    circle = "rbxassetid://102720278203768",
-    square = "rbxassetid://100976494216154",
-    radio_on = "rbxassetid://101885204738917",
-    checkbox_on = "rbxassetid://105977668655594",
-}
-
 Vortex.Theme = Vortex.Themes.Vortex
 
 local function make(className, properties, parent)
@@ -585,30 +572,26 @@ function Vortex:CreateWindow(options)
         Position = UDim2.new(1, -70, 0, 17),
         Size = UDim2.fromOffset(22, 22),
         BackgroundColor3 = theme.Surface2,
-        Text = "",
+        Text = "—",
         TextColor3 = theme.Text,
         Font = Enum.Font.GothamBold,
         TextSize = 14,
         AutoButtonColor = false,
     }, top)
     corner(minimize, 6)
-    local minimizeIcon = makeIcon(minimize, self:GetIcon("minimize"), 13, theme.Text, "VortexMinimizeIcon")
-    if minimizeIcon then minimizeIcon.Position = UDim2.fromOffset(5, 5) end
     animateButton(minimize, theme.Surface2, theme.Border)
     local close = make("TextButton", {
         Position = UDim2.new(1, -40, 0, 17),
         Size = UDim2.fromOffset(22, 22),
         BackgroundColor3 = theme.Danger,
         BackgroundTransparency = 0.15,
-        Text = "",
+        Text = "×",
         TextColor3 = theme.Text,
         Font = Enum.Font.GothamBold,
         TextSize = 16,
         AutoButtonColor = false,
     }, top)
     corner(close, 6)
-    local closeIcon = makeIcon(close, self:GetIcon("close"), 13, theme.Text, "VortexCloseIcon")
-    if closeIcon then closeIcon.Position = UDim2.fromOffset(5, 5) end
     animateButton(close, theme.Danger, Color3.fromRGB(255, 110, 125))
 
     local tabBar = make("ScrollingFrame", {
@@ -808,8 +791,7 @@ function Vortex:CreateWindow(options)
         self.IsMinimized = value == true
         tabBar.Visible = not self.IsMinimized
         content.Visible = not self.IsMinimized
-        minimize.Text = ""
-        if minimizeIcon then minimizeIcon.Image = self.IsMinimized and self:GetIcon("plus") or self:GetIcon("minimize") end
+        minimize.Text = self.IsMinimized and "+" or "—"
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize}, Enum.EasingStyle.Quint)
     end
 
@@ -1278,21 +1260,17 @@ function Vortex:CreateWindow(options)
                 for _, value in ipairs(options) do if selected[value] then table.insert(names, tostring(value)) end end
                 button.Text = tostring(text or "Multi-select") .. ": " .. (#names > 0 and table.concat(names, ", ") or "None")
                 for value, optionButton in pairs(optionButtons) do
-                    optionButton.Text = tostring(value)
-                    local stateIcon = optionButton:FindFirstChild("VortexStateIcon")
-                    if stateIcon then stateIcon.Image = selected[value] and Vortex:GetIcon("checkbox_on") or Vortex:GetIcon("square") end
+                    optionButton.Text = (selected[value] and "■  " or "□  ") .. tostring(value)
                 end
                 if call and callback then task.spawn(callback, selected) end
             end
             for _, option in ipairs(options) do
-                local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
+                local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
                 make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, optionButton)
-                local stateIcon = makeIcon(optionButton, Vortex:GetIcon("square"), 13, theme.Muted, "VortexStateIcon")
-                if stateIcon then stateIcon.Position = UDim2.fromOffset(8, 6); make("UIPadding", {PaddingLeft = UDim.new(0, 27)}, optionButton) end
                 optionButtons[option] = optionButton
                 optionButton.MouseButton1Click:Connect(function()
                     selected[option] = not selected[option]
-                    optionButton.Text = tostring(option)
+                    optionButton.Text = (selected[option] and "■  " or "□  ") .. tostring(option)
                     refresh(true)
                 end)
             end
@@ -1499,18 +1477,14 @@ function Vortex:CreateWindow(options)
             local function refresh()
                 for _, entry in ipairs(group.Items) do
                     local active = entry.Value == selected
-                    entry.Object.Text = tostring(entry.Value)
-                    local stateIcon = entry.Object:FindFirstChild("VortexStateIcon")
-                    if stateIcon then stateIcon.Image = active and Vortex:GetIcon("radio_on") or Vortex:GetIcon("circle") end
+                    entry.Object.Text = (active and "●  " or "○  ") .. tostring(entry.Value)
                     entry.Object.TextColor3 = active and theme.Accent2 or theme.Text
                 end
             end
             for _, option in ipairs(options) do
-                local item = make("TextButton", {Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = theme.Surface, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, page)
+                local item = make("TextButton", {Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = theme.Surface, Text = "○  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, page)
                 corner(item, 7)
                 make("UIPadding", {PaddingLeft = UDim.new(0, 12)}, item)
-                local stateIcon = makeIcon(item, Vortex:GetIcon("circle"), 14, theme.Muted, "VortexStateIcon")
-                if stateIcon then stateIcon.Position = UDim2.fromOffset(10, 9); make("UIPadding", {PaddingLeft = UDim.new(0, 32)}, item) end
                 table.insert(group.Items, {Value = option, Object = item})
                 item.MouseButton1Click:Connect(function()
                     selected = option
