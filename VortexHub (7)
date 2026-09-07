@@ -139,13 +139,13 @@ end
 local function animateButton(button, normalColor, hoverColor)
     local scale = button:FindFirstChild("VortexButtonScale")
     if not scale then
-        local absoluteSize = button.AbsoluteSize
-        local currentPosition = button.Position
+        local size = button.Size
+        local position = button.Position
         button.Position = UDim2.new(
-            currentPosition.X.Scale,
-            currentPosition.X.Offset + absoluteSize.X / 2,
-            currentPosition.Y.Scale,
-            currentPosition.Y.Offset + absoluteSize.Y / 2
+            position.X.Scale + size.X.Scale * 0.5,
+            position.X.Offset + size.X.Offset * 0.5,
+            position.Y.Scale + size.Y.Scale * 0.5,
+            position.Y.Offset + size.Y.Offset * 0.5
         )
         button.AnchorPoint = Vector2.new(0.5, 0.5)
         scale = make("UIScale", {Name = "VortexButtonScale", Scale = 1}, button)
@@ -503,14 +503,15 @@ function Vortex:CreateWindow(options)
     corner(backgroundDim, 14)
     local glowFrame = make("Frame", {
         Name = "VortexInnerGlow",
-        Position = UDim2.fromOffset(2, 2),
-        Size = UDim2.new(1, -4, 1, -4),
+        Position = UDim2.fromOffset(5, 5),
+        Size = UDim2.new(1, -10, 1, -10),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
+        ClipsDescendants = true,
         ZIndex = 1,
     }, root)
-    corner(glowFrame, 12)
-    local outline = stroke(glowFrame, theme.Border, 0.1, 1.5)
+    corner(glowFrame, 9)
+    local outline = stroke(glowFrame, theme.Border, 0.1, 1)
     local gradient = make("UIGradient", {
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, theme.Accent),
