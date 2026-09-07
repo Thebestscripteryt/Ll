@@ -669,6 +669,16 @@ function Vortex:CreateWindow(options)
         }),
         Rotation = 20,
     }, outline)
+    local scanMask = make("Frame", {
+        Name = "VortexScanlineMask",
+        Size = UDim2.fromScale(1, 1),
+        Position = UDim2.fromScale(0, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        ZIndex = 20,
+    }, root)
+    corner(scanMask, 14)
     local scanline = make("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.12, 0, 0.88, 0),
@@ -678,7 +688,7 @@ function Vortex:CreateWindow(options)
         BackgroundTransparency = 0.72,
         BorderSizePixel = 0,
         ZIndex = 20,
-    }, root)
+    }, scanMask)
     local scanGradient = make("UIGradient", {
         Rotation = 90,
         Color = ColorSequence.new(theme.Accent, theme.Accent2),
