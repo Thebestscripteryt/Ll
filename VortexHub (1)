@@ -205,6 +205,38 @@ function Vortex:CreateWindow(options)
     local subtitle = options.Subtitle or "Owned by Nexxy"
     local width = options.Width or 430
     local height = options.Height or 330
+    local autoSize = options.AutoSize ~= false
+    local mobileHeightRatio = math.clamp(options.MobileHeightRatio or 0.78, 0.62, 0.9)
+    local mobileAspectRatio = math.clamp(options.MobileAspectRatio or (width / height), 0.72, 1.5)
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+    local isTouch = UserInputService.TouchEnabled
+    local device = isTouch and (viewport.X < 600 and "Phone" or "Tablet") or "Desktop"
+    local function responsiveSize(view)
+        if not autoSize then return width, height end
+        local marginX = device == "Phone" and 16 or 28
+        local marginY = device == "Phone" and 28 or 40
+        local maxWidth = math.max(260, view.X - marginX)
+        local maxHeight = math.max(190, view.Y - marginY)
+        local targetWidth = math.min(width, maxWidth)
+        local targetHeight = math.min(height, maxHeight)
+        if device == "Phone" then
+            targetHeight = math.min(targetHeight, view.Y * mobileHeightRatio)
+            -- Keep width and height tied together. This preserves the same
+            -- proportions in portrait and landscape instead of using a
+            -- separate hard-coded horizontal size.
+            targetWidth = targetHeight * mobileAspectRatio
+            if targetWidth > maxWidth then
+                targetWidth = maxWidth
+                targetHeight = targetWidth / mobileAspectRatio
+            end
+        elseif device == "Tablet" then
+            targetWidth = math.min(targetWidth, view.X * 0.88)
+            targetHeight = math.min(targetHeight, view.Y * 0.78)
+        end
+        return math.floor(targetWidth), math.floor(targetHeight)
+    end
+    width, height = responsiveSize(viewport)
 
     local old = playerGui and playerGui:FindFirstChild("VortexHub")
     if old then old:Destroy() end
@@ -213,6 +245,7 @@ function Vortex:CreateWindow(options)
         Name = "VortexHub",
         ResetOnSpawn = false,
         IgnoreGuiInset = true,
+        ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, playerGui)
     local root = make("Frame", {
@@ -349,6 +382,27 @@ function Vortex:CreateWindow(options)
         _connections = {gradientConnection},
     }
     table.insert(self.Windows, window)
+
+    window.Device = device
+    window.AutoSize = autoSize
+    function window:ResponsiveSize()
+        local currentCamera = workspace.CurrentCamera
+        if not currentCamera then return self.NormalSize end
+        local view = currentCamera.ViewportSize
+        device = isTouch and (view.X < 600 and "Phone" or "Tablet") or "Desktop"
+        self.Device = device
+        width, height = responsiveSize(view)
+        self.NormalSize = UDim2.fromOffset(width, height)
+        if not self.IsMinimized then tween(self.Root, 0.24, {Size = self.NormalSize}) end
+        return self.NormalSize
+    end
+    local viewportConnection
+    if camera and autoSize then
+        viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            if window.Gui and window.Gui.Parent then window:ResponsiveSize() end
+        end)
+        table.insert(window._connections, viewportConnection)
+    end
 
     root.Size = UDim2.fromOffset(math.max(1, width - 80), math.max(1, height - 80))
     root.BackgroundTransparency = 1
