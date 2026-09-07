@@ -354,7 +354,8 @@ end
 
 local function serializeFlag(value)
     if typeof(value) == "EnumItem" then
-        return {__type = "Enum", EnumType = value.EnumType.Name, Name = value.Name}
+        local enumType = tostring(value.EnumType):match("%.([^%.]+)$")
+        return {__type = "Enum", EnumType = enumType, Name = value.Name}
     elseif typeof(value) == "Color3" then
         return {__type = "Color3", R = value.R, G = value.G, B = value.B}
     elseif typeof(value) == "Vector2" then
