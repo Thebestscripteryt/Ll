@@ -139,6 +139,15 @@ end
 local function animateButton(button, normalColor, hoverColor)
     local scale = button:FindFirstChild("VortexButtonScale")
     if not scale then
+        local absoluteSize = button.AbsoluteSize
+        local currentPosition = button.Position
+        button.Position = UDim2.new(
+            currentPosition.X.Scale,
+            currentPosition.X.Offset + absoluteSize.X / 2,
+            currentPosition.Y.Scale,
+            currentPosition.Y.Offset + absoluteSize.Y / 2
+        )
+        button.AnchorPoint = Vector2.new(0.5, 0.5)
         scale = make("UIScale", {Name = "VortexButtonScale", Scale = 1}, button)
     end
     button.MouseEnter:Connect(function()
@@ -419,9 +428,6 @@ function Vortex:CreateWindow(options)
         local targetHeight = math.min(height, maxHeight)
         if device == "Phone" then
             targetHeight = math.min(targetHeight, view.Y * mobileHeightRatio)
-            -- Keep width and height tied together. This preserves the same
-            -- proportions in portrait and landscape instead of using a
-            -- separate hard-coded horizontal size.
             targetWidth = targetHeight * mobileAspectRatio
             if targetWidth > maxWidth then
                 targetWidth = maxWidth
@@ -495,7 +501,16 @@ function Vortex:CreateWindow(options)
         ZIndex = 0,
     }, root)
     corner(backgroundDim, 14)
-    local outline = stroke(root, theme.Border, 0.1, 1.5)
+    local glowFrame = make("Frame", {
+        Name = "VortexInnerGlow",
+        Position = UDim2.fromOffset(2, 2),
+        Size = UDim2.new(1, -4, 1, -4),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 1,
+    }, root)
+    corner(glowFrame, 12)
+    local outline = stroke(glowFrame, theme.Border, 0.1, 1.5)
     local gradient = make("UIGradient", {
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, theme.Accent),
@@ -805,8 +820,6 @@ function Vortex:CreateWindow(options)
         tabBar.Visible = not self.IsMinimized
         content.Visible = not self.IsMinimized
         minimize.Text = self.IsMinimized and "+" or "—"
-        -- Hide the title-bar repair strip while minimized so the root UICorner
-        -- remains visible on both bottom corners.
         topRepair.Visible = not self.IsMinimized
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize}, Enum.EasingStyle.Quint)
     end
@@ -1582,7 +1595,6 @@ function Vortex:CreateWindow(options)
             return make("Frame", {Size = UDim2.new(1, 0, 0, height or 8), BackgroundTransparency = 1}, page)
         end
 
-        -- Naming aliases used by the other common Roblox UI library styles.
         tab.CreateButton = tab.AddButton
         tab.CreateOnceButton = tab.AddOnceButton
         tab.AddOneTimeButton = tab.AddOnceButton
