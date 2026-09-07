@@ -251,16 +251,16 @@ function Vortex:SetTheme(theme)
             for _, object in ipairs(window.Gui:GetDescendants()) do
                 if object:IsA("GuiObject") then
                     local role = object:GetAttribute("ThemeRole")
-                    local replacement = role and selected[role] or replacements[object.BackgroundColor3]
+                    local replacement = role and selected[role]
                     if replacement then object.BackgroundColor3 = replacement end
                     if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
                         local textRole = object:GetAttribute("TextThemeRole")
-                        replacement = textRole and selected[textRole] or replacements[object.TextColor3]
+                        replacement = textRole and selected[textRole]
                         if replacement then object.TextColor3 = replacement end
                     end
                 elseif object:IsA("UIStroke") then
                     local role = object:GetAttribute("ThemeRole")
-                    local replacement = role and selected[role] or replacements[object.Color]
+                    local replacement = role and selected[role]
                     if replacement then object.Color = replacement end
                 elseif object:IsA("UIGradient") then
                     if object.Parent and object.Parent:IsA("UIStroke") then
@@ -1055,7 +1055,7 @@ function Vortex:CreateWindow(options)
             hovered = false
             tween(tip, 0.12, {TextTransparency = 1}).Completed:Connect(function()
                 if hovered or not tip.Parent then return end
-                tip.Visible = false
+                tip:Destroy()
             end)
         end))
         return tip
@@ -1464,11 +1464,11 @@ function Vortex:CreateWindow(options)
                 if internalUpdate then return end
                 invokeCallback(enterPressed)
             end)
-            local control = {Object = box, Get = function() return box.Text end, Set = function(_, value)
+            local control = {Object = box, Get = function() return box.Text end, Set = function(_, value, silent)
                 internalUpdate = true
                 box.Text = tostring(value or "")
                 internalUpdate = false
-                invokeCallback(true)
+                if not silent then invokeCallback(true) end
             end}
             if flagName then registerFlag(flagName, control) end
             return control
@@ -1698,7 +1698,7 @@ function Vortex:CreateWindow(options)
                     bind, listening = input.KeyCode, false
                     Vortex.Keybinds[bind] = control
                     keyButton.Text = bind.Name
-                elseif not processed and bind ~= Enum.KeyCode.Unknown and input.KeyCode == bind and callback then
+                elseif not processed and bind ~= Enum.KeyCode.Unknown and input.KeyCode == bind and Vortex.Keybinds[bind] == control and callback then
                     task.spawn(function()
                         local ok, err = pcall(callback, bind)
                         if not ok then warn(err) end
