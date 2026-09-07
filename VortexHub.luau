@@ -178,14 +178,14 @@ end
 local function animateButton(button, normalColor, hoverColor)
     local scale = button:FindFirstChild("VortexButtonScale")
     if not scale then
-        local size = button.Size
+        local size = button.AbsoluteSize
         local position = button.Position
         button.AnchorPoint = Vector2.new(0.5, 0.5)
         button.Position = UDim2.new(
             position.X.Scale,
-            position.X.Offset + size.X.Offset / 2,
+            position.X.Offset + size.X / 2,
             position.Y.Scale,
-            position.Y.Offset + size.Y.Offset / 2
+            position.Y.Offset + size.Y / 2
         )
         scale = make("UIScale", {Name = "VortexButtonScale", Scale = 1}, button)
     end
@@ -1388,7 +1388,7 @@ function Vortex:CreateWindow(options)
             local valueLabel = make("TextLabel", {Position = UDim2.new(1, -58, 0, 7), Size = UDim2.fromOffset(46, 16), BackgroundTransparency = 1, Text = displayValue(value), TextColor3 = theme.Accent2, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right}, frame)
             local track = make("Frame", {Position = UDim2.fromOffset(12, 34), Size = UDim2.new(1, -24, 0, 6), BackgroundColor3 = theme.Surface2}, frame)
             corner(track, 3)
-            local fill = make("Frame", {Size = UDim2.fromScale((value - minimum) / math.max(1, maximum - minimum), 1), BackgroundColor3 = theme.Accent}, track)
+            local fill = make("Frame", {Size = UDim2.fromScale((value - minimum) / math.max(0.000001, maximum - minimum), 1), BackgroundColor3 = theme.Accent}, track)
             corner(fill, 3)
             local draggingSlider = false
             local function setValueFromX(x, call)
@@ -1404,7 +1404,7 @@ function Vortex:CreateWindow(options)
                 value = math.clamp(value, minimum, maximum)
                 value = math.clamp(value, minimum, maximum)
                 valueLabel.Text = displayValue(value)
-                local snappedRatio = (value - minimum) / math.max(1, maximum - minimum)
+                local snappedRatio = (value - minimum) / math.max(0.000001, maximum - minimum)
                 fill.Size = UDim2.fromScale(snappedRatio, 1)
                 if call and callback then
                     task.spawn(function()
@@ -1425,10 +1425,10 @@ function Vortex:CreateWindow(options)
                 value = math.clamp(newValue, minimum, maximum)
                 if track.AbsoluteSize.X <= 0 then
                     task.defer(function()
-                        if track.Parent and track.AbsoluteSize.X > 0 then setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(1, maximum - minimum)) * track.AbsoluteSize.X, true) end
+                        if track.Parent and track.AbsoluteSize.X > 0 then setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(0.000001, maximum - minimum)) * track.AbsoluteSize.X, true) end
                     end)
                 else
-                    setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(1, maximum - minimum)) * track.AbsoluteSize.X, true)
+                    setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(0.000001, maximum - minimum)) * track.AbsoluteSize.X, true)
                 end
             end}
             if flagName then registerFlag(flagName, control) end
