@@ -669,26 +669,16 @@ function Vortex:CreateWindow(options)
         }),
         Rotation = 20,
     }, outline)
-    local scanMask = make("Frame", {
-        Name = "VortexScanlineMask",
-        Size = UDim2.fromScale(1, 1),
-        Position = UDim2.fromScale(0, 0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        ZIndex = 20,
-    }, root)
-    corner(scanMask, 14)
     local scanline = make("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.12, 0, 0.88, 0),
-        Size = UDim2.new(0.12, 0, 1.15, 0),
+        Position = UDim2.new(-0.28, 0, 1.18, 0),
+        Size = UDim2.new(0.18, 0, 1.7, 0),
         Rotation = -38,
         BackgroundColor3 = theme.Accent2,
         BackgroundTransparency = 0.72,
         BorderSizePixel = 0,
         ZIndex = 20,
-    }, scanMask)
+    }, root)
     local scanGradient = make("UIGradient", {
         Rotation = 90,
         Color = ColorSequence.new(theme.Accent, theme.Accent2),
@@ -703,8 +693,8 @@ function Vortex:CreateWindow(options)
     task.spawn(function()
         while scanline.Parent do
             if not gui.Enabled or not scanline.Visible then task.wait(0.2) continue end
-            scanline.Position = UDim2.new(0.12, 0, 0.88, 0)
-            local pass = tween(scanline, 2.8, {Position = UDim2.new(0.88, 0, 0.12, 0)}, Enum.EasingStyle.Sine)
+            scanline.Position = UDim2.new(-0.28, 0, 1.18, 0)
+            local pass = tween(scanline, 2.8, {Position = UDim2.new(1.28, 0, -0.18, 0)}, Enum.EasingStyle.Sine)
             pass.Completed:Wait()
             task.wait(0.55)
         end
@@ -882,9 +872,6 @@ function Vortex:CreateWindow(options)
     root.Size = UDim2.fromOffset(math.max(1, width - 80), math.max(1, height - 80))
     root.BackgroundTransparency = 1
     tween(root, 0.38, {Size = window.NormalSize, BackgroundTransparency = 0}, Enum.EasingStyle.Back)
-    task.defer(function()
-        if root.Parent then window:ClampToViewport() end
-    end)
 
     local dragging = false
     local dragBlocked = false
@@ -892,7 +879,6 @@ function Vortex:CreateWindow(options)
     local dragSmoothing = RunService.RenderStepped:Connect(function()
         if dragging and dragTarget and root.Parent then
             root.Position = root.Position:Lerp(dragTarget, 0.24)
-            window:ClampToViewport()
         end
     end)
     table.insert(window._connections, dragSmoothing)
