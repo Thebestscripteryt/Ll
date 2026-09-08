@@ -279,7 +279,10 @@ function Vortex:SetTheme(theme)
                     local replacement = role and selected[role]
                     if replacement then object.Color = replacement end
                 elseif object:IsA("UIGradient") then
-                    if object.Parent and object.Parent:IsA("UIStroke") then
+                    if object.Name == "VortexRainbowGradient" or object.Name == "VortexFadeGradient" then
+                    elseif object.Parent and object.Parent:IsA("UIStroke") then
+                        object.Color = ColorSequence.new(selected.Accent, selected.Accent2 or selected.Accent)
+                    elseif object.Name == "VortexAccentGradient" then
                         object.Color = ColorSequence.new(selected.Accent, selected.Accent2 or selected.Accent)
                     else
                         object.Color = ColorSequence.new(selected.Background, selected.Surface)
@@ -566,7 +569,7 @@ end
 
 function Vortex:CreateWindow(options)
     options = options or {}
-    local theme = self.Theme
+    local theme = setmetatable({}, {__index = function(_, key) return Vortex.Theme[key] end})
     local title = options.Title or "Vortex Hub"
     local subtitle = options.Subtitle or "Owned by Nexxy"
     local width = options.Width or 430
@@ -705,6 +708,7 @@ function Vortex:CreateWindow(options)
         ZIndex = 1,
     }, scanClip)
     local scanGradient = make("UIGradient", {
+        Name = "VortexAccentGradient",
         Rotation = 90,
         Color = ColorSequence.new(theme.Accent, theme.Accent2),
         Transparency = NumberSequence.new({
@@ -825,6 +829,7 @@ function Vortex:CreateWindow(options)
     local tabBarOutline = stroke(tabBar, theme.Border, 0.15, 1)
     corner(tabBar, 8)
     local tabBarOutlineGradient = make("UIGradient", {
+        Name = "VortexRainbowGradient",
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
             ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
@@ -851,6 +856,7 @@ function Vortex:CreateWindow(options)
         Visible = false,
     }, root)
     make("UIGradient", {
+        Name = "VortexFadeGradient",
         Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 0),
             NumberSequenceKeypoint.new(1, 1),
@@ -866,6 +872,7 @@ function Vortex:CreateWindow(options)
         Visible = false,
     }, root)
     make("UIGradient", {
+        Name = "VortexFadeGradient",
         Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
             NumberSequenceKeypoint.new(1, 0),
