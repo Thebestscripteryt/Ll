@@ -1013,13 +1013,11 @@ function Vortex:CreateWindow(options)
         if signal(input) then dragging = false dragTarget = nil end
     end))
 
-    local minimized = false
     minimize.InputBegan:Connect(function(input) if signal(input) then dragBlocked = true end end)
     close.InputBegan:Connect(function(input) if signal(input) then dragBlocked = true end end)
     window:Track(UserInputService.InputEnded:Connect(function(input) if signal(input) then dragBlocked = false end end))
     minimize.MouseButton1Click:Connect(function()
-        minimized = not minimized
-        window:Minimize(minimized)
+        window:Minimize(not window.IsMinimized)
     end)
     close.MouseButton1Click:Connect(function() window:Destroy() end)
 
@@ -2138,7 +2136,9 @@ function Vortex:CreateWindow(options)
             for _, descendant in ipairs(object:GetDescendants()) do
                 if descendant:IsA("TextLabel") or descendant:IsA("TextButton") or descendant:IsA("TextBox") then
                     if descendant.Text and descendant.Text ~= "" then table.insert(parts, descendant.Text) end
-                    if descendant.PlaceholderText and descendant.PlaceholderText ~= "" then table.insert(parts, descendant.PlaceholderText) end
+                end
+                if descendant:IsA("TextBox") and descendant.PlaceholderText and descendant.PlaceholderText ~= "" then
+                    table.insert(parts, descendant.PlaceholderText)
                 end
             end
             return string.lower(table.concat(parts, " "))
