@@ -194,6 +194,13 @@ local function animateButton(button, normalColor, hoverColor)
             button.Parent = slot
         else
             local size = button.AbsoluteSize
+            if size.X <= 0 and size.Y <= 0 then
+                local parentSize = button.Parent and button.Parent.AbsoluteSize or Vector2.new(0, 0)
+                size = Vector2.new(
+                    button.Size.X.Offset + button.Size.X.Scale * parentSize.X,
+                    button.Size.Y.Offset + button.Size.Y.Scale * parentSize.Y
+                )
+            end
             local position = button.Position
             button.AnchorPoint = Vector2.new(0.5, 0.5)
             button.Position = UDim2.new(
@@ -247,21 +254,9 @@ function Vortex:SetTheme(theme)
         warn(("Unknown theme: %s"):format(tostring(theme)))
         return nil
     end
-    local previous = self.Theme or self.Themes.Vortex
     self.Theme = selected
     self.ThemeName = typeof(theme) == "string" and theme or self.ThemeName
     Vortex.Theme = selected
-    local replacements = {
-        [previous.Background] = selected.Background,
-        [previous.Surface] = selected.Surface,
-        [previous.Surface2] = selected.Surface2,
-        [previous.Border] = selected.Border,
-        [previous.Accent] = selected.Accent,
-        [previous.Accent2] = selected.Accent2,
-        [previous.Text] = selected.Text,
-        [previous.Muted] = selected.Muted,
-        [previous.Danger] = selected.Danger,
-    }
     for _, window in ipairs(self.Windows) do
         if window.Gui and window.Gui.Parent then
             for _, object in ipairs(window.Gui:GetDescendants()) do
@@ -1101,6 +1096,58 @@ function Vortex:CreateWindow(options)
         setText(titleLabel, value)
     end
 
+    local tagPill, tagLabel
+    function window:SetTag(text, tagColor)
+        if not text or text == "" then
+            if tagPill then tagPill:Destroy() tagPill, tagLabel = nil, nil end
+            return
+        end
+        if not tagPill then
+            tagPill = make("Frame", {
+                Name = "VortexTag",
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -78, 0, 19),
+                Size = UDim2.fromOffset(0, 16),
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = tagColor or theme.Accent,
+                BorderSizePixel = 0,
+                ZIndex = 2,
+            }, top)
+            corner(tagPill, 5)
+            make("UIPadding", {PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6)}, tagPill)
+            tagLabel = make("TextLabel", {
+                BackgroundTransparency = 1,
+                Text = text,
+                TextColor3 = Color3.new(1, 1, 1),
+                Font = Enum.Font.GothamBold,
+                TextSize = 9,
+                Size = UDim2.new(1, 0, 1, 0),
+                ZIndex = 2,
+            }, tagPill)
+        else
+            tagLabel.Text = text
+            tagPill.BackgroundColor3 = tagColor or theme.Accent
+        end
+    end
+    if options.Tag then window:SetTag(options.Tag, options.TagColor) end
+
+    function window:SetToggleKeybind(key)
+        if type(key) == "string" then key = Enum.KeyCode[key] end
+        if typeof(key) == "EnumItem" and key.EnumType == Enum.KeyCode then
+            self._toggleKeybind = key
+        else
+            self._toggleKeybind = nil
+        end
+        return self._toggleKeybind
+    end
+    if options.ToggleKeybind then window:SetToggleKeybind(options.ToggleKeybind) end
+    window:Track(UserInputService.InputBegan:Connect(function(input, processed)
+        if processed or not window._toggleKeybind then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == window._toggleKeybind then
+            window:Toggle()
+        end
+    end))
+
     function window:SetAuthor(value)
         local authorLabel = top:FindFirstChild("VortexAuthor")
         if not authorLabel then
@@ -1615,7 +1662,7 @@ function Vortex:CreateWindow(options)
             local button = make("TextButton", {Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 30), BackgroundColor3 = theme.Background, Text = tostring(text or "Dropdown") .. ": " .. tostring(selected), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, frame)
             corner(button, 6)
             make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, button)
-            local list = make("Frame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, #options * 27), BackgroundColor3 = theme.Surface2}, frame)
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, #options * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, #options * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
             local function closeDropdown()
@@ -1627,7 +1674,8 @@ function Vortex:CreateWindow(options)
                 for _, child in ipairs(list:GetChildren()) do
                     if child:IsA("TextButton") then child:Destroy() end
                 end
-                list.Size = UDim2.new(1, -20, 0, #options * 27)
+                list.Size = UDim2.new(1, -20, 0, math.min(130, #options * 27))
+                list.CanvasSize = UDim2.fromOffset(0, #options * 27)
                 for _, option in ipairs(options) do
                     local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false}, list)
                     optionButton.MouseButton1Click:Connect(function()
@@ -1646,7 +1694,7 @@ function Vortex:CreateWindow(options)
             rebuildOptions()
             button.MouseButton1Click:Connect(function()
                 open = not open
-                frame.Size = UDim2.new(1, 0, 0, open and 48 + #options * 27 or 44)
+                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, #options * 27) or 44)
             end)
             tab.Window:Track(UserInputService.InputBegan:Connect(function(input)
                 if open and signal(input) then
@@ -1905,6 +1953,83 @@ function Vortex:CreateWindow(options)
             function control:Get() return value end
             control.Object = frame
             return control
+        end
+
+        function tab:AddStat(name, value)
+            local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = theme.Surface}, page)
+            corner(frame, 8)
+            stroke(frame, theme.Border, 0.35, 1)
+            make("TextLabel", {Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -100, 1, 0), BackgroundTransparency = 1, Text = tostring(name or "Stat"), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left}, frame)
+            local valueLabel = make("TextLabel", {Position = UDim2.new(1, -92, 0, 0), Size = UDim2.fromOffset(80, 40), BackgroundTransparency = 1, Text = tostring(value or 0), TextColor3 = theme.Accent, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right}, frame)
+            local stat = {Object = frame, Value = value or 0}
+            function stat:Set(newValue)
+                self.Value = newValue
+                valueLabel.Text = tostring(newValue)
+                valueLabel.TextColor3 = theme.Accent2
+                tween(valueLabel, 0.3, {TextColor3 = theme.Accent})
+            end
+            function stat:Get()
+                return self.Value
+            end
+            return stat
+        end
+
+        function tab:AddConsole(config)
+            config = config or {}
+            local logHeight = config.Height or 120
+            local maxLines = config.MaxLines or 200
+            local frame = make("Frame", {Size = UDim2.new(1, 0, 0, logHeight + 34), BackgroundColor3 = theme.Surface}, page)
+            corner(frame, 10)
+            stroke(frame, theme.Border, 0.35, 1)
+            make("TextLabel", {Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 18), BackgroundTransparency = 1, Text = config.Name or "Console", TextColor3 = theme.Text, Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left}, frame)
+            local scroller = make("ScrollingFrame", {
+                Position = UDim2.fromOffset(12, 30),
+                Size = UDim2.new(1, -24, 0, logHeight),
+                BackgroundColor3 = theme.Background,
+                BorderSizePixel = 0,
+                ScrollBarThickness = 3,
+                CanvasSize = UDim2.new(0, 0, 0, 0),
+                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                ScrollingDirection = Enum.ScrollingDirection.Y,
+            }, frame)
+            corner(scroller, 8)
+            make("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6)}, scroller)
+            make("UIListLayout", {Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder}, scroller)
+            local pinnedToBottom = true
+            scroller:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
+                if pinnedToBottom then
+                    scroller.CanvasPosition = Vector2.new(0, math.max(0, scroller.AbsoluteCanvasSize.Y - scroller.AbsoluteSize.Y))
+                end
+            end)
+            scroller:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+                local maxScroll = math.max(0, scroller.AbsoluteCanvasSize.Y - scroller.AbsoluteSize.Y)
+                pinnedToBottom = scroller.CanvasPosition.Y >= maxScroll - 4
+            end)
+            local lines = {}
+            local console = {Object = frame}
+            function console:Log(text, color)
+                local lineLabel = make("TextLabel", {
+                    Size = UDim2.new(1, 0, 0, 14),
+                    AutomaticSize = Enum.AutomaticSize.Y,
+                    BackgroundTransparency = 1,
+                    Text = tostring(text),
+                    TextColor3 = color or theme.Text,
+                    Font = Enum.Font.Code,
+                    TextSize = 11,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextWrapped = true,
+                }, scroller)
+                table.insert(lines, lineLabel)
+                if #lines > maxLines then
+                    local old = table.remove(lines, 1)
+                    old:Destroy()
+                end
+            end
+            function console:Clear()
+                for _, lineLabel in ipairs(lines) do lineLabel:Destroy() end
+                table.clear(lines)
+            end
+            return console
         end
 
         function tab:AddStatus(text, state)
