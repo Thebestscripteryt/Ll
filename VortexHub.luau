@@ -18,6 +18,7 @@ local Vortex = {
     Icons = {},
     TextObjects = setmetatable({}, {__mode = "k"}),
     Keybinds = {},
+    Font = Enum.Font.Arcade,
 }
 
 local Players = game:GetService("Players")
@@ -595,6 +596,7 @@ function Vortex:Notify(title, message, duration)
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundColor3 = theme.Surface,
         BorderSizePixel = 0,
+        ClipsDescendants = true,
     }, holder)
     corner(card, 9)
     stroke(card, theme.Accent, 0.35, 1)
@@ -1815,13 +1817,26 @@ function Vortex:CreateWindow(options)
             stroke(frame, theme.Border, 0.35, 1)
             local button = make("TextButton", {Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 30), BackgroundColor3 = theme.Background, Text = tostring(text or "Dropdown") .. ": " .. tostring(selected), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, frame)
             corner(button, 6)
-            make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, button)
+            make("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 20)}, button)
+            local chevron = make("TextLabel", {
+                Name = "VortexDropdownChevron",
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(14, 14),
+                BackgroundTransparency = 1,
+                Text = "\226\150\190",
+                TextColor3 = theme.Muted,
+                Font = Enum.Font.GothamBold,
+                TextSize = 11,
+            }, button)
             local uniqueOptionCount = #uniqueOptions(options)
-            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
             local function closeDropdown()
                 open = false
+                list.Visible = false
+                chevron.Text = "\226\150\190"
                 frame.Size = UDim2.new(1, 0, 0, 44)
             end
             local optionRows = {}
@@ -1829,7 +1844,15 @@ function Vortex:CreateWindow(options)
                 local isSelected = option == selected
                 row.BackgroundTransparency = isSelected and 0.85 or 1
                 local rowStroke = row:FindFirstChildOfClass("UIStroke")
-                if rowStroke then rowStroke.Transparency = isSelected and 0 or 1 end
+                if rowStroke then
+                    -- Retag alongside the color reassignment (same reasoning as
+                    -- SelectTab/AddToggle/AddRadio): otherwise a later SetTheme
+                    -- would read the stale "Accent" tag on every row, even the
+                    -- unselected ones that are currently showing theme.Border.
+                    rowStroke:SetAttribute("ThemeRole", isSelected and "Accent" or "Border")
+                    rowStroke.Color = isSelected and Vortex.Theme.Accent or Vortex.Theme.Border
+                    rowStroke.Transparency = isSelected and 0 or 0.5
+                end
             end
             local function refreshHighlights()
                 for option, row in pairs(optionRows) do
@@ -1849,7 +1872,7 @@ function Vortex:CreateWindow(options)
                 for _, option in ipairs(deduped) do
                     local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false}, list)
                     corner(optionButton, 6)
-                    stroke(optionButton, theme.Accent, 1, 1)
+                    stroke(optionButton, theme.Border, 0.5, 1)
                     make("UIPadding", {PaddingLeft = UDim.new(0, 6)}, optionButton)
                     optionRows[option] = optionButton
                     highlightRow(option, optionButton)
@@ -1870,6 +1893,8 @@ function Vortex:CreateWindow(options)
             rebuildOptions()
             button.MouseButton1Click:Connect(function()
                 open = not open
+                list.Visible = open
+                chevron.Text = open and "\226\150\180" or "\226\150\190"
                 frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * 27) or 44)
             end)
             tab:Track(UserInputService.InputBegan:Connect(function(input)
@@ -1878,8 +1903,7 @@ function Vortex:CreateWindow(options)
                     local bounds = frame.AbsolutePosition
                     local size = frame.AbsoluteSize
                     if position.X < bounds.X or position.X > bounds.X + size.X or position.Y < bounds.Y or position.Y > bounds.Y + size.Y then
-                        open = false
-                        frame.Size = UDim2.new(1, 0, 0, 44)
+                        closeDropdown()
                     end
                 end
             end))
@@ -1941,17 +1965,38 @@ function Vortex:CreateWindow(options)
             stroke(frame, theme.Border, 0.35, 1)
             local button = make("TextButton", {Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 30), BackgroundColor3 = theme.Background, TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, frame)
             corner(button, 6)
-            make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, button)
-            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
+            make("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 20)}, button)
+            local chevron = make("TextLabel", {
+                Name = "VortexDropdownChevron",
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(14, 14),
+                BackgroundTransparency = 1,
+                Text = "\226\150\190",
+                TextColor3 = theme.Muted,
+                Font = Enum.Font.GothamBold,
+                TextSize = 11,
+            }, button)
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
+            local function closeDropdown()
+                open = false
+                list.Visible = false
+                chevron.Text = "\226\150\190"
+                frame.Size = UDim2.new(1, 0, 0, 44)
+            end
             local optionButtons = {}
             local callbackUpdating = false
             local function highlightOption(option, optionButton)
                 local isSelected = selected[option] == true
                 optionButton.BackgroundTransparency = isSelected and 0.85 or 1
                 local rowStroke = optionButton:FindFirstChildOfClass("UIStroke")
-                if rowStroke then rowStroke.Transparency = isSelected and 0 or 1 end
+                if rowStroke then
+                    rowStroke:SetAttribute("ThemeRole", isSelected and "Accent" or "Border")
+                    rowStroke.Color = isSelected and Vortex.Theme.Accent or Vortex.Theme.Border
+                    rowStroke.Transparency = isSelected and 0 or 0.5
+                end
             end
             local function refresh(call)
                 local names = {}
@@ -1976,7 +2021,7 @@ function Vortex:CreateWindow(options)
                 else
                     local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
                     corner(optionButton, 6)
-                    stroke(optionButton, theme.Accent, 1, 1)
+                    stroke(optionButton, theme.Border, 0.5, 1)
                     make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, optionButton)
                     optionButtons[option] = optionButton
                     highlightOption(option, optionButton)
@@ -1990,6 +2035,8 @@ function Vortex:CreateWindow(options)
             end
             button.MouseButton1Click:Connect(function()
                 open = not open
+                list.Visible = open
+                chevron.Text = open and "\226\150\180" or "\226\150\190"
                 frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * 27) or 44)
             end)
             tab:Track(UserInputService.InputBegan:Connect(function(input)
@@ -1998,8 +2045,7 @@ function Vortex:CreateWindow(options)
                     local bounds = frame.AbsolutePosition
                     local size = frame.AbsoluteSize
                     if position.X < bounds.X or position.X > bounds.X + size.X or position.Y < bounds.Y or position.Y > bounds.Y + size.Y then
-                        open = false
-                        frame.Size = UDim2.new(1, 0, 0, 44)
+                        closeDropdown()
                     end
                 end
             end))
