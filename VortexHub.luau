@@ -704,7 +704,7 @@ function Vortex:CreateWindow(options)
         Name = "VortexHub",
         ResetOnSpawn = false,
         IgnoreGuiInset = true,
-        ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets,
+        ScreenInsets = Enum.ScreenInsets.None,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, getPlayerGui())
     local root = make("Frame", {
@@ -1087,13 +1087,16 @@ function Vortex:CreateWindow(options)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
             local size = root.AbsoluteSize
-            -- No viewport clamp here: the window can be dragged fully off-screen
-            -- (partially or entirely) instead of getting stuck at the edge, which
-            -- is what made dragging on mobile feel stuck/cranky — the finger kept
-            -- moving past the clamped edge while the window stayed pinned, then
-            -- had to "catch up" once dragged back inward.
-            local x = startAbsolute.X + delta.X
-            local y = startAbsolute.Y + delta.Y
+            local view = camera and camera.ViewportSize or Vector2.new(800, 600)
+            -- Free dragging, no hard clamp to the viewport edge (that's what made
+            -- it feel stuck/cranky before). But without *any* limit, the title
+            -- bar — the only draggable part — could end up fully off-screen with
+            -- no way to grab it again. So instead of clamping to "stay fully
+            -- inside", this only guarantees a small grabbable sliver (a corner of
+            -- the header) always remains reachable on-screen.
+            local grabMargin = 48
+            local x = math.clamp(startAbsolute.X + delta.X, grabMargin - size.X, view.X - grabMargin)
+            local y = math.clamp(startAbsolute.Y + delta.Y, grabMargin - size.Y, view.Y - grabMargin)
             dragTarget = UDim2.fromOffset(x + size.X / 2, y)
         end
     end))
