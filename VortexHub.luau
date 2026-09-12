@@ -27,6 +27,9 @@ local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
 local activeTweens = setmetatable({}, {__mode = "k"})
 local onceButtonStates = setmetatable({}, {__mode = "k"})
+local instanceConnections = setmetatable({}, {__mode = "k"})
+
+local themeRoleForColor
 
 local function normalizeIcon(value)
     if type(value) ~= "string" or value == "" then return nil end
@@ -45,6 +48,8 @@ local function makeIcon(parent, value, size, color, name)
     icon.Image = image
     icon.ImageColor3 = color or Color3.new(1, 1, 1)
     icon.ScaleType = Enum.ScaleType.Fit
+    local role = themeRoleForColor and themeRoleForColor(icon.ImageColor3)
+    if role then icon:SetAttribute("ImageThemeRole", role) end
     icon.Parent = parent
     return icon
 end
@@ -82,31 +87,26 @@ Vortex.Themes = {
         Border = Color3.fromRGB(67, 68, 91),
         Accent = Color3.fromRGB(157, 104, 255),
         Accent2 = Color3.fromRGB(77, 180, 255),
+        Accent3 = Color3.fromRGB(124, 58, 237),
         Text = Color3.fromRGB(247, 246, 255),
         Muted = Color3.fromRGB(158, 157, 180),
         Danger = Color3.fromRGB(255, 90, 112),
+        Glow = Color3.fromRGB(157, 104, 255),
     },
 }
 
 Vortex.Theme = Vortex.Themes.Vortex
 
-local function themeRoleForColor(color)
+themeRoleForColor = function(color)
     if typeof(color) ~= "Color3" then return nil end
     local theme = Vortex.Theme
-    local roles = {
-        Background = theme.Background,
-        Surface = theme.Surface,
-        Surface2 = theme.Surface2,
-        Border = theme.Border,
-        Accent = theme.Accent,
-        Accent2 = theme.Accent2,
-        Accent3 = theme.Accent3,
-        Text = theme.Text,
-        Muted = theme.Muted,
-        Danger = theme.Danger,
-        Glow = theme.Glow,
+    local order = {
+        "Background", "Surface", "Surface2", "Border",
+        "Accent", "Accent2", "Accent3",
+        "Text", "Muted", "Danger", "Glow",
     }
-    for role, value in pairs(roles) do
+    for _, role in ipairs(order) do
+        local value = theme[role]
         if value and color == value then return role end
     end
     return nil
@@ -192,9 +192,12 @@ local function animateButton(button, normalColor, hoverColor)
             button.Position = UDim2.new(0.5, 0, 0.5, 0)
             button.AnchorPoint = Vector2.new(0.5, 0.5)
             button.Parent = slot
+            instanceConnections[slot] = button:GetPropertyChangedSignal("LayoutOrder"):Connect(function()
+                slot.LayoutOrder = button.LayoutOrder
+            end)
         else
             local size = button.AbsoluteSize
-            if size.X <= 0 and size.Y <= 0 then
+            if size.X <= 0 or size.Y <= 0 then
                 local parentSize = button.Parent and button.Parent.AbsoluteSize or Vector2.new(0, 0)
                 size = Vector2.new(
                     button.Size.X.Offset + button.Size.X.Scale * parentSize.X,
@@ -212,12 +215,20 @@ local function animateButton(button, normalColor, hoverColor)
         end
         scale = make("UIScale", {Name = "VortexButtonScale", Scale = 1}, button)
     end
+    local normalRole = themeRoleForColor(normalColor)
+    local hoverRole = themeRoleForColor(hoverColor)
+    local function currentNormalColor()
+        return (normalRole and Vortex.Theme[normalRole]) or normalColor
+    end
+    local function currentHoverColor()
+        return (hoverRole and Vortex.Theme[hoverRole]) or hoverColor or currentNormalColor()
+    end
     button.MouseEnter:Connect(function()
-        tween(button, 0.16, {BackgroundColor3 = hoverColor or normalColor})
+        tween(button, 0.16, {BackgroundColor3 = currentHoverColor()})
         tween(scale, 0.16, {Scale = 1.025}, Enum.EasingStyle.Back)
     end)
     button.MouseLeave:Connect(function()
-        tween(button, 0.2, {BackgroundColor3 = normalColor})
+        tween(button, 0.2, {BackgroundColor3 = currentNormalColor()})
         tween(scale, 0.2, {Scale = 1}, Enum.EasingStyle.Quint)
     end)
     button.MouseButton1Down:Connect(function()
@@ -238,16 +249,22 @@ end
 function Vortex:SetTheme(theme)
     local selected
     if typeof(theme) == "table" then
-        selected = theme
+        selected = {}
+        for key, value in pairs(self.Themes.Vortex) do selected[key] = value end
+        for key, value in pairs(theme) do selected[key] = value end
     elseif type(theme) == "string" then
-        selected = self.Themes[theme] or self.Themes[theme:lower()]
-        if not selected then
+        local found = self.Themes[theme] or self.Themes[theme:lower()]
+        if not found then
             for name, candidate in pairs(self.Themes) do
                 if type(name) == "string" and name:lower() == theme:lower() then
-                    selected = candidate
+                    found = candidate
                     break
                 end
             end
+        end
+        if found then
+            selected = {}
+            for key, value in pairs(found) do selected[key] = value end
         end
     end
     if not selected then
@@ -257,9 +274,9 @@ function Vortex:SetTheme(theme)
     self.Theme = selected
     self.ThemeName = typeof(theme) == "string" and theme or self.ThemeName
     Vortex.Theme = selected
-    for _, window in ipairs(self.Windows) do
-        if window.Gui and window.Gui.Parent then
-            for _, object in ipairs(window.Gui:GetDescendants()) do
+    local function applyThemeToTree(root)
+        for _, object in ipairs(root:GetDescendants()) do
+            pcall(function()
                 if object:IsA("GuiObject") then
                     local role = object:GetAttribute("ThemeRole")
                     local replacement = role and selected[role]
@@ -268,6 +285,10 @@ function Vortex:SetTheme(theme)
                         local textRole = object:GetAttribute("TextThemeRole")
                         replacement = textRole and selected[textRole]
                         if replacement then object.TextColor3 = replacement end
+                    elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
+                        local imageRole = object:GetAttribute("ImageThemeRole")
+                        replacement = imageRole and selected[imageRole]
+                        if replacement then object.ImageColor3 = replacement end
                     end
                 elseif object:IsA("UIStroke") then
                     local role = object:GetAttribute("ThemeRole")
@@ -275,16 +296,36 @@ function Vortex:SetTheme(theme)
                     if replacement then object.Color = replacement end
                 elseif object:IsA("UIGradient") then
                     if object.Name == "VortexRainbowGradient" or object.Name == "VortexFadeGradient" then
+                    elseif object.Name == "VortexStrokeGradient" then
+                        object.Color = ColorSequence.new({
+                            ColorSequenceKeypoint.new(0, selected.Accent),
+                            ColorSequenceKeypoint.new(0.5, selected.Accent2),
+                            ColorSequenceKeypoint.new(1, selected.Accent3 or selected.Accent),
+                        })
                     elseif object.Parent and object.Parent:IsA("UIStroke") then
                         object.Color = ColorSequence.new(selected.Accent, selected.Accent2 or selected.Accent)
                     elseif object.Name == "VortexAccentGradient" then
                         object.Color = ColorSequence.new(selected.Accent, selected.Accent2 or selected.Accent)
+                    elseif object.Name == "VortexBackgroundGradient" then
+                        object.Color = ColorSequence.new({
+                            ColorSequenceKeypoint.new(0, selected.Background),
+                            ColorSequenceKeypoint.new(0.55, selected.Surface),
+                            ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 12, 18)),
+                        })
                     else
                         object.Color = ColorSequence.new(selected.Background, selected.Surface)
                     end
                 end
-            end
+            end)
         end
+    end
+    for _, window in ipairs(self.Windows) do
+        if window.Gui and window.Gui.Parent then
+            applyThemeToTree(window.Gui)
+        end
+    end
+    if self._NotificationGui and self._NotificationGui.Parent then
+        applyThemeToTree(self._NotificationGui)
     end
     return selected
 end
@@ -324,38 +365,64 @@ function Vortex:SetFont(font)
         return false
     end
     self.Font = font
+    local dead
     for object in pairs(self.TextObjects) do
         if object and object.Parent then
             pcall(function() object.Font = font end)
         else
-            self.TextObjects[object] = nil
+            dead = dead or {}
+            dead[#dead + 1] = object
         end
+    end
+    if dead then
+        for _, object in ipairs(dead) do self.TextObjects[object] = nil end
     end
     return font
 end
 
 function Vortex:IsRunning()
     local hasNotifications = self._NotificationGui ~= nil and self._NotificationGui.Parent ~= nil
-    return self._Running ~= false and (#self.Windows > 0 or hasNotifications)
+    return #self.Windows > 0 or hasNotifications
 end
 
 function Vortex:GetFlag(name)
     local control = self.Flags[name]
-    return control and control.Get and control:Get() or nil
+    if not control or not control.Get then return nil end
+    local ok, result = pcall(control.Get, control)
+    return ok and result or nil
 end
 
 function Vortex:SetFlag(name, value)
     local control = self.Flags[name]
-    if control and control.Set then control:Set(value) return true end
-    return false
+    if not control or not control.Set then return false, false end
+    local ok, result = pcall(control.Set, control, value)
+    if not ok then
+        warn(("Flag '%s' Set failed: %s"):format(tostring(name), tostring(result)))
+        return true, false
+    end
+    return true, result ~= false
 end
 
-local function registerFlag(name, control)
+local function registerFlag(name, control, owner)
     if not name then return end
     if Vortex.Flags[name] and Vortex.Flags[name] ~= control then
         warn(("Duplicate flag '%s'; replacing previous control"):format(tostring(name)))
     end
     Vortex.Flags[name] = control
+    if owner then
+        owner.FlagOwners = owner.FlagOwners or {}
+        owner.FlagOwners[name] = control
+    end
+end
+
+local function unregisterOwnerFlags(owner)
+    if not owner or not owner.FlagOwners then return end
+    for name, control in pairs(owner.FlagOwners) do
+        if Vortex.Flags[name] == control then
+            Vortex.Flags[name] = nil
+        end
+    end
+    owner.FlagOwners = {}
 end
 
 local function serializeSequence(sequence)
@@ -447,9 +514,12 @@ function Vortex:LoadFlags(name)
     for flagName, value in pairs(values) do
         local decoded = deserializeFlag(value)
         if decoded ~= nil then
-            if not self:SetFlag(flagName, decoded) then
+            local found, accepted = self:SetFlag(flagName, decoded)
+            if not found then
                 unknownFlags += 1
                 warn(("Unknown flag in config: %s"):format(tostring(flagName)))
+            elseif not accepted then
+                warn(("Flag '%s' rejected the value from config"):format(tostring(flagName)))
             end
         else
             warn(("Skipping invalid value for flag: %s"):format(tostring(flagName)))
@@ -471,6 +541,7 @@ function Vortex:Notify(title, message, duration)
             ResetOnSpawn = false,
             IgnoreGuiInset = true,
             ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+            DisplayOrder = 100,
         }, getPlayerGui())
         self._NotificationGui = gui
         self._NotificationList = make("Frame", {
@@ -490,14 +561,15 @@ function Vortex:Notify(title, message, duration)
     for _, child in ipairs(self._NotificationList:GetChildren()) do
         if child:IsA("Frame") then table.insert(notificationFrames, child) end
     end
+    table.sort(notificationFrames, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+    local offscreenOffset = (self._NotificationList.AbsoluteSize.X or 300) + 30
     while #notificationFrames >= math.max(1, self.NotificationLimit or 5) do
         local oldest = table.remove(notificationFrames, 1)
         if oldest and oldest.Parent then
             local oldestCard = oldest:FindFirstChildWhichIsA("Frame")
             if oldestCard then
-                local removal = tween(oldestCard, 0.18, {Position = UDim2.new(1, 330, 0, 0)})
-                task.spawn(function()
-                    if oldestCard.Parent then removal.Completed:Wait() end
+                tween(oldestCard, 0.18, {Position = UDim2.new(1, offscreenOffset, 0, 0)})
+                task.delay(0.2, function()
                     if oldest.Parent then oldest:Destroy() end
                 end)
             else
@@ -511,13 +583,15 @@ function Vortex:Notify(title, message, duration)
     local notificationFont = self.Font or Enum.Font.Gotham
     local messageBounds = TextService:GetTextSize(messageText, 11, notificationFont, Vector2.new(270, 1000))
     local notificationHeight = math.max(64, 42 + messageBounds.Y)
+    self._NotificationCounter = (self._NotificationCounter or 0) + 1
     local holder = make("Frame", {
         Size = UDim2.new(1, 0, 0, notificationHeight),
         BackgroundTransparency = 1,
+        LayoutOrder = self._NotificationCounter,
     }, self._NotificationList)
     local card = make("Frame", {
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, 330, 0, 0),
+        Position = UDim2.new(1, offscreenOffset, 0, 0),
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundColor3 = theme.Surface,
         BorderSizePixel = 0,
@@ -555,9 +629,10 @@ function Vortex:Notify(title, message, duration)
     tween(card, 0.25, {Position = UDim2.new(1, 0, 0, 0)})
     task.delay(duration, function()
         if not card.Parent or not card:IsDescendantOf(game) then return end
-        local out = tween(card, 0.2, {Position = UDim2.new(1, 330, 0, 0)})
-        if card.Parent then out.Completed:Wait() end
-        if holder.Parent then holder:Destroy() end
+        tween(card, 0.2, {Position = UDim2.new(1, offscreenOffset, 0, 0)})
+        task.delay(0.22, function()
+            if holder.Parent then holder:Destroy() end
+        end)
     end)
     return holder
 end
@@ -582,14 +657,15 @@ function Vortex:CreateWindow(options)
     local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
     local isTouch = UserInputService.TouchEnabled
     local device = isTouch and (viewport.X < 600 and "Phone" or "Tablet") or "Desktop"
+    local baseWidth, baseHeight = width, height
     local function responsiveSize(view)
         if not autoSize then return width, height end
         local marginX = device == "Phone" and 16 or 28
         local marginY = device == "Phone" and 28 or 40
         local maxWidth = math.max(260, view.X - marginX)
         local maxHeight = math.max(190, view.Y - marginY)
-        local targetWidth = math.min(width, maxWidth)
-        local targetHeight = math.min(height, maxHeight)
+        local targetWidth = math.min(baseWidth, maxWidth)
+        local targetHeight = math.min(baseHeight, maxHeight)
         if device == "Phone" then
             targetHeight = math.min(targetHeight, view.Y * mobileHeightRatio)
             targetWidth = targetHeight * mobileAspectRatio
@@ -610,10 +686,17 @@ function Vortex:CreateWindow(options)
         for _, connection in ipairs(oldWindow._connections or {}) do
             if connection and connection.Connected then connection:Disconnect() end
         end
+        for _, tab in ipairs(oldWindow.Tabs or {}) do
+            for _, connection in ipairs(tab._connections or {}) do
+                if connection and connection.Connected then connection:Disconnect() end
+            end
+            tab._connections = {}
+        end
         if oldWindow.Gui then oldWindow.Gui:Destroy() end
     end
     table.clear(self.Windows)
     table.clear(self.Flags)
+    table.clear(self.Keybinds)
     local old = getPlayerGui():FindFirstChild("VortexHub")
     if old then old:Destroy() end
 
@@ -621,7 +704,7 @@ function Vortex:CreateWindow(options)
         Name = "VortexHub",
         ResetOnSpawn = false,
         IgnoreGuiInset = true,
-        ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets,
+        ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, getPlayerGui())
     local root = make("Frame", {
@@ -638,6 +721,7 @@ function Vortex:CreateWindow(options)
     end
     corner(root, 14)
     make("UIGradient", {
+        Name = "VortexBackgroundGradient",
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, theme.Background),
             ColorSequenceKeypoint.new(0.55, theme.Surface),
@@ -677,6 +761,7 @@ function Vortex:CreateWindow(options)
     corner(glowFrame, 10)
     local outline = stroke(glowFrame, theme.Border, 0.1, 2)
     local gradient = make("UIGradient", {
+        Name = "VortexStrokeGradient",
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, theme.Accent),
             ColorSequenceKeypoint.new(0.5, theme.Accent2),
@@ -715,11 +800,12 @@ function Vortex:CreateWindow(options)
     }, scanline)
     corner(scanline, 12)
     task.spawn(function()
+        local scanDuration = 2.8
         while scanline.Parent do
             if not gui.Enabled or not scanline.Visible then task.wait(0.2) continue end
             scanline.Position = UDim2.new(-0.28, 0, 1.18, 0)
-            local pass = tween(scanline, 2.8, {Position = UDim2.new(1.28, 0, -0.18, 0)}, Enum.EasingStyle.Sine)
-            pass.Completed:Wait()
+            tween(scanline, scanDuration, {Position = UDim2.new(1.28, 0, -0.18, 0)}, Enum.EasingStyle.Sine)
+            task.wait(scanDuration + 0.05)
             task.wait(0.55)
         end
     end)
@@ -751,7 +837,7 @@ function Vortex:CreateWindow(options)
     end
     local titleLabel = make("TextLabel", {
         Position = UDim2.fromOffset(titleOffset, 8),
-        Size = UDim2.new(1, titleOffset - 110, 0, 22),
+        Size = UDim2.new(1, -titleOffset - 110, 0, 22),
         BackgroundTransparency = 1,
         Text = title,
         TextColor3 = theme.Text,
@@ -912,9 +998,12 @@ function Vortex:CreateWindow(options)
     window.BackgroundDim = backgroundDim
     function window:SetBackground(image, transparency, tint, scaleType)
         local targetTransparency = transparency ~= nil and math.clamp(transparency, 0, 1) or self.Background.ImageTransparency
+        self._BackgroundGeneration = (self._BackgroundGeneration or 0) + 1
+        local generation = self._BackgroundGeneration
         tween(self.Background, 0.14, {ImageTransparency = 1})
         task.delay(0.14, function()
             if not self.Background or not self.Background.Parent then return end
+            if self._BackgroundGeneration ~= generation then return end
             self.Background.Image = image or ""
             tween(self.Background, 0.18, {ImageTransparency = targetTransparency})
         end)
@@ -997,10 +1086,14 @@ function Vortex:CreateWindow(options)
     window:Track(UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
-            local view = camera and camera.ViewportSize or Vector2.new(800, 600)
             local size = root.AbsoluteSize
-            local x = math.clamp(startAbsolute.X + delta.X, 8, math.max(8, view.X - size.X - 8))
-            local y = math.clamp(startAbsolute.Y + delta.Y, 8, math.max(8, view.Y - size.Y - 8))
+            -- No viewport clamp here: the window can be dragged fully off-screen
+            -- (partially or entirely) instead of getting stuck at the edge, which
+            -- is what made dragging on mobile feel stuck/cranky — the finger kept
+            -- moving past the clamped edge while the window stayed pinned, then
+            -- had to "catch up" once dragged back inward.
+            local x = startAbsolute.X + delta.X
+            local y = startAbsolute.Y + delta.Y
             dragTarget = UDim2.fromOffset(x + size.X / 2, y)
         end
     end))
@@ -1029,8 +1122,18 @@ function Vortex:CreateWindow(options)
             local closing = tween(self.Root, 0.2, {Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1})
             local guiToDestroy = self.Gui
             closing.Completed:Connect(function()
-                if guiToDestroy.Parent and self._Destroyed then guiToDestroy:Destroy() end
+                if guiToDestroy.Parent then guiToDestroy:Destroy() end
             end)
+            task.delay(1, function()
+                if guiToDestroy.Parent then guiToDestroy:Destroy() end
+            end)
+        end
+        for _, tab in ipairs(self.Tabs) do
+            unregisterOwnerFlags(tab)
+            for _, connection in ipairs(tab._connections or {}) do
+                if connection and connection.Connected then connection:Disconnect() end
+            end
+            tab._connections = {}
         end
         for index, item in ipairs(Vortex.Windows) do
             if item == self then table.remove(Vortex.Windows, index) break end
@@ -1066,6 +1169,7 @@ function Vortex:CreateWindow(options)
 
     function window:SetSize(newWidth, newHeight)
         width, height = math.max(280, newWidth or width), math.max(180, newHeight or height)
+        baseWidth, baseHeight = width, height
         self.NormalSize = UDim2.fromOffset(width, height)
         if not self.IsMinimized then tween(self.Root, 0.22, {Size = self.NormalSize}) end
         task.defer(function() if self.Root and self.Root.Parent then self:ClampToViewport() end end)
@@ -1197,7 +1301,7 @@ function Vortex:CreateWindow(options)
 
     function window:Tooltip(target, text)
         if not target or not target:IsA("GuiObject") then return nil end
-        local tip = make("TextLabel", {Name = "VortexTooltip", AutomaticSize = Enum.AutomaticSize.XY, BackgroundColor3 = theme.Surface, Text = tostring(text or ""), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, Visible = false, ZIndex = 100}, gui)
+        local tip = make("TextLabel", {Name = "VortexTooltip", AutomaticSize = Enum.AutomaticSize.XY, BackgroundColor3 = theme.Surface, Text = tostring(text or ""), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, Visible = false, TextTransparency = 1, ZIndex = 100}, gui)
         corner(tip, 6)
         stroke(tip, theme.Accent, 0.35, 1)
         make("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5)}, tip)
@@ -1216,7 +1320,7 @@ function Vortex:CreateWindow(options)
             hovered = false
             tween(tip, 0.12, {TextTransparency = 1}).Completed:Connect(function()
                 if hovered or not tip.Parent then return end
-                tip:Destroy()
+                tip.Visible = false
             end)
         end))
         return tip
@@ -1232,14 +1336,20 @@ function Vortex:CreateWindow(options)
         end
         for _, item in ipairs(self.Tabs) do
             item.Page.Visible = false
+            item.Button:SetAttribute("ThemeRole", "Surface2")
+            item.Label:SetAttribute("TextThemeRole", "Muted")
             tween(item.Button, 0.12, {BackgroundColor3 = theme.Surface2})
             tween(item.Label, 0.12, {TextColor3 = theme.Muted})
         end
         if tab then
             tab.Page.Visible = true
+            tab.Button:SetAttribute("ThemeRole", "Accent")
+            tab.Label:SetAttribute("TextThemeRole", "Text")
             tween(tab.Button, 0.16, {BackgroundColor3 = theme.Accent})
             tween(tab.Label, 0.16, {TextColor3 = theme.Text})
             self.CurrentTab = tab
+        else
+            self.CurrentTab = nil
         end
         return tab ~= nil
     end
@@ -1256,9 +1366,20 @@ function Vortex:CreateWindow(options)
                 item.Destroyed = true
                 if item.Button then item.Button:Destroy() end
                 if item.Page then item.Page:Destroy() end
-                if self.TabLookup[item.Name] == item then self.TabLookup[item.Name] = nil end
-                if self.TabLookupLower[item.Name:lower()] == item then self.TabLookupLower[item.Name:lower()] = nil end
+                unregisterOwnerFlags(item)
+                for _, connection in ipairs(item._connections or {}) do
+                    if connection and connection.Connected then connection:Disconnect() end
+                end
+                item._connections = {}
                 table.remove(self.Tabs, index)
+                local replacement
+                if self.TabLookup[item.Name] == item or self.TabLookupLower[item.Name:lower()] == item then
+                    for _, remaining in ipairs(self.Tabs) do
+                        if remaining.Name == item.Name then replacement = remaining break end
+                    end
+                end
+                if self.TabLookup[item.Name] == item then self.TabLookup[item.Name] = replacement end
+                if self.TabLookupLower[item.Name:lower()] == item then self.TabLookupLower[item.Name:lower()] = replacement end
                 if self.CurrentTab == item then self:SelectTab(self.Tabs[1]) end
                 return true
             end
@@ -1316,12 +1437,17 @@ function Vortex:CreateWindow(options)
         }, content)
         make("UIPadding", {
             PaddingTop = UDim.new(0, 4),
-            PaddingBottom = UDim.new(0, 10),
+            PaddingBottom = UDim.new(0, 0),
             PaddingLeft = UDim.new(0, 2),
             PaddingRight = UDim.new(0, 2),
         }, page)
         make("UIListLayout", {Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder}, page)
-        local tab = {Window = self, Name = tabName, Button = button, Label = tabLabel, Icon = tabIcon, Page = page, Elements = {}}
+        make("Frame", {Name = "VortexBottomSpacer", Size = UDim2.new(1, 0, 0, 10), BackgroundTransparency = 1, LayoutOrder = 9999}, page)
+        local tab = {Window = self, Name = tabName, Button = button, Label = tabLabel, Icon = tabIcon, Page = page, Elements = {}, _connections = {}}
+        function tab:Track(connection)
+            if connection then table.insert(self._connections, connection) end
+            return connection
+        end
         table.insert(self.Tabs, tab)
         self.TabLookup[tabName] = self.TabLookup[tabName] or tab
         self.TabLookupLower[tabNameKey] = self.TabLookupLower[tabNameKey] or tab
@@ -1346,8 +1472,9 @@ function Vortex:CreateWindow(options)
                 local config = name
                 name, description, sectionIcon = config.Name or "Section", config.Description or config.Content, config.Icon or config.Image
             end
+            local hasDescription = description ~= nil and description ~= ""
             local frame = make("Frame", {
-                Size = UDim2.new(1, 0, 0, description and 44 or 25),
+                Size = UDim2.new(1, 0, 0, hasDescription and 44 or 25),
                 BackgroundTransparency = 1,
             }, page)
             local icon = makeIcon(frame, Vortex:GetIcon(sectionIcon) or sectionIcon, 14, theme.Accent2, "VortexSectionIcon")
@@ -1363,7 +1490,7 @@ function Vortex:CreateWindow(options)
                 TextTruncate = Enum.TextTruncate.AtEnd,
             }, frame)
             if icon then icon.Position = UDim2.fromOffset(0, 3) end
-            if description then
+            if hasDescription then
                 make("TextLabel", {
                     Position = UDim2.fromOffset(0, 20),
                     Size = UDim2.new(1, 0, 0, 17),
@@ -1396,9 +1523,9 @@ function Vortex:CreateWindow(options)
                 TextTruncate = Enum.TextTruncate.AtEnd,
             }, page)
             corner(label, 7)
-            make("UIPadding", {PaddingLeft = UDim.new(0, 10)}, label)
+            local padding = make("UIPadding", {PaddingLeft = UDim.new(0, 10)}, label)
             local icon = makeIcon(label, Vortex:GetIcon(iconValue) or iconValue, 13, theme.Accent2, "VortexLabelIcon")
-            if icon then icon.Position = UDim2.fromOffset(8, 7); label.TextXAlignment = Enum.TextXAlignment.Left; make("UIPadding", {PaddingLeft = UDim.new(0, 28)}, label) end
+            if icon then icon.Position = UDim2.fromOffset(8, 7); label.TextXAlignment = Enum.TextXAlignment.Left; padding.PaddingLeft = UDim.new(0, 28) end
             return {Object = label, Set = function(_, value) label.Text = tostring(value) end}
         end
 
@@ -1429,9 +1556,9 @@ function Vortex:CreateWindow(options)
             local icon = makeIcon(buttonFrame, Vortex:GetIcon(iconValue) or iconValue, 14, theme.Accent2, "VortexButtonIcon")
             if icon then icon.Position = UDim2.fromOffset(10, 11); buttonFrame.TextXAlignment = Enum.TextXAlignment.Left; make("UIPadding", {PaddingLeft = UDim.new(0, 32)}, buttonFrame) end
             local clicked = false
-            onceButtonStates[buttonFrame] = function(reset)
+            onceButtonStates[buttonFrame] = function(reset, targetButton)
                 clicked = reset ~= false
-                if not clicked then buttonFrame.TextTransparency = 0 end
+                if not clicked and targetButton then targetButton.TextTransparency = 0 end
             end
             buttonFrame.MouseButton1Click:Connect(function()
                 if once and clicked then return end
@@ -1454,7 +1581,7 @@ function Vortex:CreateWindow(options)
         end
 
         function tab:ResetButton(button)
-            if onceButtonStates[button] then onceButtonStates[button](false) end
+            if onceButtonStates[button] then onceButtonStates[button](false, button) end
         end
 
         function tab:AddOnceButton(text, callback)
@@ -1502,6 +1629,8 @@ function Vortex:CreateWindow(options)
             local knob = make("Frame", {Size = UDim2.fromOffset(14, 14), BackgroundColor3 = theme.Muted}, switch)
             corner(knob, 7)
             local function update(call)
+                switch:SetAttribute("ThemeRole", value and "Accent" or "Surface2")
+                knob:SetAttribute("ThemeRole", value and "Text" or "Muted")
                 tween(switch, 0.16, {BackgroundColor3 = value and theme.Accent or theme.Surface2})
                 tween(knob, 0.16, {Position = value and UDim2.fromOffset(23, 3) or UDim2.fromOffset(3, 3), BackgroundColor3 = value and theme.Text or theme.Muted})
                 if call and callback then
@@ -1515,12 +1644,12 @@ function Vortex:CreateWindow(options)
             update(false)
             local control = {Object = buttonFrame, Get = function() return value end, Set = function(_, newValue)
                 newValue = newValue == true
-                if value == newValue then return false end
+                if value == newValue then return true end
                 value = newValue
                 update(true)
                 return true
             end}
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -1551,6 +1680,26 @@ function Vortex:CreateWindow(options)
             local fill = make("Frame", {Size = UDim2.fromScale((value - minimum) / math.max(0.000001, maximum - minimum), 1), BackgroundColor3 = theme.Accent}, track)
             corner(fill, 3)
             local draggingSlider = false
+            local callbackRunning = false
+            local pendingValue, hasPending = nil, false
+            local function fireSliderCallback(v)
+                if not callback then return end
+                if callbackRunning then
+                    pendingValue, hasPending = v, true
+                    return
+                end
+                callbackRunning = true
+                task.spawn(function()
+                    local ok, err = pcall(callback, v)
+                    if not ok then warn(err) end
+                    callbackRunning = false
+                    if hasPending then
+                        local nextValue = pendingValue
+                        hasPending = false
+                        fireSliderCallback(nextValue)
+                    end
+                end)
+            end
             local function setValueFromX(x, call)
                 if track.AbsoluteSize.X <= 0 then return end
                 if maximum == minimum then
@@ -1560,38 +1709,32 @@ function Vortex:CreateWindow(options)
                     return
                 end
                 local ratio = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-                value = math.floor((minimum + (maximum - minimum) * ratio) / increment + 0.5) * increment
-                value = math.clamp(value, minimum, maximum)
+                local raw = minimum + (maximum - minimum) * ratio
+                value = math.floor((raw - minimum) / increment + 0.5) * increment + minimum
                 value = math.clamp(value, minimum, maximum)
                 valueLabel.Text = displayValue(value)
                 local snappedRatio = (value - minimum) / math.max(0.000001, maximum - minimum)
                 fill.Size = UDim2.fromScale(snappedRatio, 1)
-                if call and callback then
-                    task.spawn(function()
-                        local ok, err = pcall(callback, value)
-                        if not ok then warn(err) end
-                    end)
-                end
+                if call then fireSliderCallback(value) end
             end
             local function beginSlider(input) if signal(input) then draggingSlider = true setValueFromX(input.Position.X, true) end end
             track.InputBegan:Connect(beginSlider)
             fill.InputBegan:Connect(beginSlider)
-            tab.Window:Track(UserInputService.InputChanged:Connect(function(input) if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then setValueFromX(input.Position.X, true) end end))
-            tab.Window:Track(UserInputService.InputEnded:Connect(function(input) if signal(input) then draggingSlider = false end end))
+            tab:Track(UserInputService.InputChanged:Connect(function(input) if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then setValueFromX(input.Position.X, true) end end))
+            tab:Track(UserInputService.InputEnded:Connect(function(input) if signal(input) then draggingSlider = false end end))
             frame.AncestryChanged:Connect(function(_, parent)
                 if not parent then draggingSlider = false end
             end)
             local control = {Object = frame, Get = function() return value end, Set = function(_, newValue)
-                value = math.clamp(newValue, minimum, maximum)
-                if track.AbsoluteSize.X <= 0 then
-                    task.defer(function()
-                        if track.Parent and track.AbsoluteSize.X > 0 then setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(0.000001, maximum - minimum)) * track.AbsoluteSize.X, true) end
-                    end)
-                else
-                    setValueFromX(track.AbsolutePosition.X + ((value - minimum) / math.max(0.000001, maximum - minimum)) * track.AbsoluteSize.X, true)
-                end
+                if type(newValue) ~= "number" or newValue ~= newValue then return false end
+                value = math.clamp(math.floor((newValue - minimum) / increment + 0.5) * increment + minimum, minimum, maximum)
+                valueLabel.Text = displayValue(value)
+                local ratio = math.clamp((value - minimum) / math.max(0.000001, maximum - minimum), 0, 1)
+                fill.Size = UDim2.fromScale(ratio, 1)
+                fireSliderCallback(value)
+                return true
             end}
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -1610,28 +1753,29 @@ function Vortex:CreateWindow(options)
             make("TextLabel", {Position = UDim2.fromOffset(12, 0), Size = UDim2.new(0.42, 0, 1, 0), BackgroundTransparency = 1, Text = tostring(text or "Input"), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left}, frame)
             local box = make("TextBox", {Position = UDim2.new(0.44, 0, 0.5, -14), Size = UDim2.new(0.52, -8, 0, 28), BackgroundColor3 = theme.Background, Text = defaultValue, PlaceholderText = placeholder or "Type here...", PlaceholderColor3 = theme.Muted, TextColor3 = theme.Text, Font = Enum.Font.Code, TextSize = 11, ClearTextOnFocus = false}, frame)
             corner(box, 6)
-            local internalUpdate = false
-            local callbackRunning = false
-            local function invokeCallback(enterPressed)
-                if not callback or callbackRunning then return end
-                callbackRunning = true
+            local focusLostRunning = false
+            local function invokeFocusLostCallback(enterPressed)
+                if not callback or focusLostRunning then return end
+                focusLostRunning = true
                 task.spawn(function()
                     local ok, err = pcall(callback, box.Text, enterPressed)
-                    callbackRunning = false
+                    focusLostRunning = false
                     if not ok then warn(err) end
                 end)
             end
             box.FocusLost:Connect(function(enterPressed)
-                if internalUpdate then return end
-                invokeCallback(enterPressed)
+                invokeFocusLostCallback(enterPressed)
             end)
             local control = {Object = box, Get = function() return box.Text end, Set = function(_, value, silent)
-                internalUpdate = true
                 box.Text = tostring(value or "")
-                internalUpdate = false
-                if not silent then invokeCallback(true) end
+                if not silent and callback then
+                    task.spawn(function()
+                        local ok, err = pcall(callback, box.Text, false)
+                        if not ok then warn(err) end
+                    end)
+                end
             end}
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -1653,6 +1797,17 @@ function Vortex:CreateWindow(options)
                     seen[key] = true
                 end
             end
+            local function uniqueOptions(values)
+                local result, seen = {}, {}
+                for _, option in ipairs(values) do
+                    local key = typeof(option) .. ":" .. tostring(option)
+                    if not seen[key] then
+                        seen[key] = true
+                        table.insert(result, option)
+                    end
+                end
+                return result
+            end
             warnDuplicateOptions(options)
             local selected = default or options[1] or "Select"
             local open = false
@@ -1662,25 +1817,47 @@ function Vortex:CreateWindow(options)
             local button = make("TextButton", {Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 30), BackgroundColor3 = theme.Background, Text = tostring(text or "Dropdown") .. ": " .. tostring(selected), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, frame)
             corner(button, 6)
             make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, button)
-            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, #options * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, #options * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
+            local uniqueOptionCount = #uniqueOptions(options)
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
             local function closeDropdown()
                 open = false
                 frame.Size = UDim2.new(1, 0, 0, 44)
             end
+            local optionRows = {}
+            local function highlightRow(option, row)
+                local isSelected = option == selected
+                row.BackgroundTransparency = isSelected and 0.85 or 1
+                local rowStroke = row:FindFirstChildOfClass("UIStroke")
+                if rowStroke then rowStroke.Transparency = isSelected and 0 or 1 end
+            end
+            local function refreshHighlights()
+                for option, row in pairs(optionRows) do
+                    highlightRow(option, row)
+                end
+            end
             local function rebuildOptions()
                 closeDropdown()
                 for _, child in ipairs(list:GetChildren()) do
                     if child:IsA("TextButton") then child:Destroy() end
                 end
-                list.Size = UDim2.new(1, -20, 0, math.min(130, #options * 27))
-                list.CanvasSize = UDim2.fromOffset(0, #options * 27)
-                for _, option in ipairs(options) do
-                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false}, list)
+                optionRows = {}
+                local deduped = uniqueOptions(options)
+                uniqueOptionCount = #deduped
+                list.Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27))
+                list.CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27)
+                for _, option in ipairs(deduped) do
+                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false}, list)
+                    corner(optionButton, 6)
+                    stroke(optionButton, theme.Accent, 1, 1)
+                    make("UIPadding", {PaddingLeft = UDim.new(0, 6)}, optionButton)
+                    optionRows[option] = optionButton
+                    highlightRow(option, optionButton)
                     optionButton.MouseButton1Click:Connect(function()
                         selected = option
                         button.Text = tostring(text or "Dropdown") .. ": " .. tostring(selected)
+                        refreshHighlights()
                         closeDropdown()
                         if callback then
                             task.spawn(function()
@@ -1694,9 +1871,9 @@ function Vortex:CreateWindow(options)
             rebuildOptions()
             button.MouseButton1Click:Connect(function()
                 open = not open
-                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, #options * 27) or 44)
+                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * 27) or 44)
             end)
-            tab.Window:Track(UserInputService.InputBegan:Connect(function(input)
+            tab:Track(UserInputService.InputBegan:Connect(function(input)
                 if open and signal(input) then
                     local position = input.Position
                     local bounds = frame.AbsolutePosition
@@ -1708,23 +1885,33 @@ function Vortex:CreateWindow(options)
                 end
             end))
             local control = {Object = frame, Get = function() return selected end, Set = function(_, value)
+                if not table.find(options, value) then return false end
                 selected = value
                 button.Text = tostring(text or "Dropdown") .. ": " .. tostring(selected)
+                refreshHighlights()
                 if callback then
                     task.spawn(function()
                         local ok, err = pcall(callback, selected)
                         if not ok then warn(err) end
                     end)
                 end
+                return true
             end}
             function control:Refresh(newOptions)
                 options = newOptions or {}
                 warnDuplicateOptions(options)
+                local previousSelected = selected
                 if selected == nil or not table.find(options, selected) then selected = options[1] or "Select" end
                 button.Text = tostring(text or "Dropdown") .. ": " .. tostring(selected)
                 rebuildOptions()
+                if selected ~= previousSelected and callback then
+                    task.spawn(function()
+                        local ok, err = pcall(callback, selected)
+                        if not ok then warn(err) end
+                    end)
+                end
             end
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -1739,48 +1926,74 @@ function Vortex:CreateWindow(options)
             local selected = {}
             for _, value in ipairs(defaults or {}) do selected[value] = true end
             local open = false
+            local uniqueOptionsList = {}
+            do
+                local seen = {}
+                for _, option in ipairs(options) do
+                    if not seen[option] then
+                        seen[option] = true
+                        table.insert(uniqueOptionsList, option)
+                    end
+                end
+            end
+            local uniqueOptionCount = #uniqueOptionsList
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = theme.Surface, ClipsDescendants = true}, page)
             corner(frame, 8)
             stroke(frame, theme.Border, 0.35, 1)
             local button = make("TextButton", {Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 30), BackgroundColor3 = theme.Background, TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, frame)
             corner(button, 6)
             make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, button)
-            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, #options * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, #options * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
             local optionButtons = {}
             local callbackUpdating = false
+            local function highlightOption(option, optionButton)
+                local isSelected = selected[option] == true
+                optionButton.BackgroundTransparency = isSelected and 0.85 or 1
+                local rowStroke = optionButton:FindFirstChildOfClass("UIStroke")
+                if rowStroke then rowStroke.Transparency = isSelected and 0 or 1 end
+            end
             local function refresh(call)
                 local names = {}
-                for _, value in ipairs(options) do if selected[value] then table.insert(names, tostring(value)) end end
+                for _, value in ipairs(uniqueOptionsList) do if selected[value] then table.insert(names, tostring(value)) end end
                 button.Text = tostring(text or "Multi-select") .. ": " .. (#names > 0 and table.concat(names, ", ") or "None")
                 for value, optionButton in pairs(optionButtons) do
                     optionButton.Text = (selected[value] and "■  " or "□  ") .. tostring(value)
+                    highlightOption(value, optionButton)
                 end
                 if call and callback and not callbackUpdating then
                     callbackUpdating = true
                     task.spawn(function()
-                        local ok, err = pcall(callback, selected)
+                        local ok, err = pcall(callback, table.clone(selected))
                         callbackUpdating = false
                         if not ok then warn(err) end
                     end)
                 end
             end
             for _, option in ipairs(options) do
-                local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
-                make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, optionButton)
-                optionButtons[option] = optionButton
-                optionButton.MouseButton1Click:Connect(function()
-                    selected[option] = not selected[option]
-                    optionButton.Text = (selected[option] and "■  " or "□  ") .. tostring(option)
-                    refresh(true)
-                end)
+                if optionButtons[option] then
+                    warn(("Duplicate MultiDropdown option: %s"):format(tostring(option)))
+                else
+                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
+                    corner(optionButton, 6)
+                    stroke(optionButton, theme.Accent, 1, 1)
+                    make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, optionButton)
+                    optionButtons[option] = optionButton
+                    highlightOption(option, optionButton)
+                    optionButton.MouseButton1Click:Connect(function()
+                        selected[option] = not selected[option]
+                        optionButton.Text = (selected[option] and "■  " or "□  ") .. tostring(option)
+                        highlightOption(option, optionButton)
+                        refresh(true)
+                    end)
+                end
             end
             button.MouseButton1Click:Connect(function()
                 open = not open
-                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, #options * 27) or 44)
+                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * 27) or 44)
             end)
-            tab.Window:Track(UserInputService.InputBegan:Connect(function(input)
+            tab:Track(UserInputService.InputBegan:Connect(function(input)
                 if open and signal(input) then
                     local position = input.Position
                     local bounds = frame.AbsolutePosition
@@ -1792,9 +2005,11 @@ function Vortex:CreateWindow(options)
                 end
             end))
             refresh(false)
-            local control = {Object = frame, Get = function() return selected end, GetArray = function()
+            local control = {Object = frame, Get = function()
+                return table.clone(selected)
+            end, GetArray = function()
                 local values = {}
-                for _, option in ipairs(options) do if selected[option] then table.insert(values, option) end end
+                for _, option in ipairs(uniqueOptionsList) do if selected[option] then table.insert(values, option) end end
                 return values
             end, Set = function(_, values)
                 selected = {}
@@ -1808,7 +2023,7 @@ function Vortex:CreateWindow(options)
                 end
                 refresh(true)
             end}
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -1845,7 +2060,8 @@ function Vortex:CreateWindow(options)
             local keyButton = make("TextButton", {Position = UDim2.new(1, -74, 0.5, -12), Size = UDim2.fromOffset(62, 24), BackgroundColor3 = theme.Background, Text = bind.Name, TextColor3 = theme.Accent2, Font = Enum.Font.Code, TextSize = 10, AutoButtonColor = false}, frame)
             corner(keyButton, 6)
             keyButton.MouseButton1Click:Connect(function() listening = true keyButton.Text = "Press key" end)
-            tab.Window:Track(UserInputService.InputBegan:Connect(function(input, processed)
+            local control
+            tab:Track(UserInputService.InputBegan:Connect(function(input, processed)
                 if listening and input.UserInputType == Enum.UserInputType.Keyboard then
                     if input.KeyCode == Enum.KeyCode.Escape then
                         listening = false
@@ -1853,10 +2069,10 @@ function Vortex:CreateWindow(options)
                         return
                     end
                     if reservedKeys[input.KeyCode] then return end
-                    if Vortex.Keybinds[input.KeyCode] and Vortex.Keybinds[input.KeyCode].Object.Parent then
+                    if Vortex.Keybinds[input.KeyCode] and Vortex.Keybinds[input.KeyCode] ~= control and Vortex.Keybinds[input.KeyCode].Object.Parent then
                         warn(("Duplicate keybind: %s"):format(input.KeyCode.Name))
                     end
-                    Vortex.Keybinds[bind] = nil
+                    if Vortex.Keybinds[bind] == control then Vortex.Keybinds[bind] = nil end
                     bind, listening = input.KeyCode, false
                     Vortex.Keybinds[bind] = control
                     keyButton.Text = bind.Name
@@ -1870,27 +2086,29 @@ function Vortex:CreateWindow(options)
             frame.AncestryChanged:Connect(function(_, parent)
                 if not parent then
                     cancelListening()
-                    if Vortex.Keybinds[bind] then Vortex.Keybinds[bind] = nil end
+                    if Vortex.Keybinds[bind] == control then Vortex.Keybinds[bind] = nil end
                 end
             end)
-            local control = {Object = frame, Get = function() return bind end, Set = function(_, value)
+            control = {Object = frame, Get = function() return bind end, Set = function(_, value)
                 if type(value) == "string" then value = Enum.KeyCode[value] end
-                if typeof(value) == "EnumItem" and value.EnumType == Enum.KeyCode then
-                    if value ~= Enum.KeyCode.Unknown and Vortex.Keybinds[value] and Vortex.Keybinds[value] ~= control and Vortex.Keybinds[value].Object.Parent then
-                        warn(("Duplicate keybind: %s"):format(value.Name))
-                    end
-                    Vortex.Keybinds[bind] = nil
-                    bind = value
-                    if bind ~= Enum.KeyCode.Unknown then Vortex.Keybinds[bind] = control end
+                if typeof(value) ~= "EnumItem" or value.EnumType ~= Enum.KeyCode then
+                    return false
                 end
+                if value ~= Enum.KeyCode.Unknown and Vortex.Keybinds[value] and Vortex.Keybinds[value] ~= control and Vortex.Keybinds[value].Object.Parent then
+                    warn(("Duplicate keybind: %s"):format(value.Name))
+                end
+                if Vortex.Keybinds[bind] == control then Vortex.Keybinds[bind] = nil end
+                bind = value
+                if bind ~= Enum.KeyCode.Unknown then Vortex.Keybinds[bind] = control end
                 cancelListening()
                 keyButton.Text = bind.Name
+                return true
             end}
             if bind ~= Enum.KeyCode.Unknown then
                 if Vortex.Keybinds[bind] and Vortex.Keybinds[bind].Object.Parent then warn(("Duplicate keybind: %s"):format(bind.Name)) end
                 Vortex.Keybinds[bind] = control
             end
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -1905,6 +2123,10 @@ function Vortex:CreateWindow(options)
             local resizing = false
             local function resizeParagraph(value)
                 if resizing then return end
+                if frame.AbsoluteSize.X <= 0 then
+                    body.Text = value
+                    return
+                end
                 resizing = true
                 local availableWidth = math.max(80, frame.AbsoluteSize.X - 24)
                 local nextHeight = math.max(30, TextService:GetTextSize(value, 10, Enum.Font.Gotham, Vector2.new(availableWidth, 1000)).Y)
@@ -1937,9 +2159,8 @@ function Vortex:CreateWindow(options)
             corner(fill, 4)
             local control = {}
             function control:Set(newValue)
-                if type(newValue) ~= "number" then return false end
-                local numericValue = newValue
-                value = math.clamp(numericValue, 0, 100)
+                if type(newValue) ~= "number" or newValue ~= newValue then return false end
+                value = math.clamp(newValue, 0, 100)
                 valueLabel.Text = tostring(value) .. "%"
                 tween(fill, 0.25, {Size = UDim2.fromScale(value / 100, 1)})
                 if callback then
@@ -2033,29 +2254,56 @@ function Vortex:CreateWindow(options)
         end
 
         function tab:AddStatus(text, state)
+            local flagName
+            if type(text) == "table" then
+                local config = text
+                flagName = config.Flag
+                text, state = config.Name or config.Text or "Status", config.Default or config.State or state
+            end
             local active = state == true
             local frame = make("Frame", {Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = theme.Surface}, page)
             corner(frame, 8)
+            stroke(frame, theme.Border, 0.35, 1)
             local dot = make("Frame", {Position = UDim2.new(0, 12, 0.5, -5), Size = UDim2.fromOffset(10, 10), BackgroundColor3 = active and Color3.fromRGB(70, 220, 140) or theme.Muted}, frame)
             corner(dot, 5)
             local label = make("TextLabel", {Position = UDim2.fromOffset(30, 0), Size = UDim2.new(1, -40, 1, 0), BackgroundTransparency = 1, Text = tostring(text or "Status"), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left}, frame)
-            local control = {Object = frame}
+            local control = {Object = frame, Get = function() return active end}
             function control:Set(newState)
                 active = newState == true
+                if active then
+                    dot:SetAttribute("ThemeRole", nil)
+                else
+                    dot:SetAttribute("ThemeRole", "Muted")
+                end
                 tween(dot, 0.18, {BackgroundColor3 = active and Color3.fromRGB(70, 220, 140) or theme.Muted})
+                return true
             end
             function control:SetText(newText) label.Text = tostring(newText or "") end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
         function tab:AddSearchbox(placeholder)
-            local box = make("TextBox", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = theme.Surface, Text = "", PlaceholderText = placeholder or "Search...", PlaceholderColor3 = theme.Muted, TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, ClearTextOnFocus = false}, page)
+            local flagName
+            local defaultValue = ""
+            if type(placeholder) == "table" then
+                local config = placeholder
+                flagName = config.Flag
+                defaultValue = config.Default or ""
+                placeholder = config.Placeholder or config.Name
+            end
+            local box = make("TextBox", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = theme.Surface, Text = defaultValue, PlaceholderText = placeholder or "Search...", PlaceholderColor3 = theme.Muted, TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 11, ClearTextOnFocus = false}, page)
             corner(box, 8)
             stroke(box, theme.Border, 0.35, 1)
             make("UIPadding", {PaddingLeft = UDim.new(0, 12)}, box)
             local search = {Object = box}
             function search:Get() return box.Text end
             function search:Clear() box.Text = "" end
+            function search:Set(value)
+                box.Text = tostring(value or "")
+                return true
+            end
+            if flagName then registerFlag(flagName, search, tab) end
             return search
         end
 
@@ -2094,9 +2342,11 @@ function Vortex:CreateWindow(options)
             local control = {Object = frame, Get = function() return color end, Set = function(_, value)
                 if typeof(value) ~= "Color3" then return false end
                 color = value
+                local found = false
                 for position, paletteColor in ipairs(palette) do
-                    if paletteColor == color then index = position break end
+                    if paletteColor == color then index = position found = true break end
                 end
+                if not found then index = 0 end
                 swatch.BackgroundColor3 = color
                 if callback then
                     task.spawn(function()
@@ -2106,7 +2356,7 @@ function Vortex:CreateWindow(options)
                 end
                 return true
             end}
-            if flagName then registerFlag(flagName, control) end
+            if flagName then registerFlag(flagName, control, tab) end
             return control
         end
 
@@ -2123,12 +2373,17 @@ function Vortex:CreateWindow(options)
             end
             options = options or {}
             local selected = default or options[1]
-            local group = {Items = {}, Get = function() return selected end}
+            local group = {Items = {}}
+            function group:Get() return selected end
+            local function retint(object, role)
+                object:SetAttribute("TextThemeRole", role)
+                object.TextColor3 = Vortex.Theme[role]
+            end
             local function refresh()
                 for _, entry in ipairs(group.Items) do
                     local active = entry.Value == selected
                     entry.Object.Text = (active and "●  " or "○  ") .. tostring(entry.Value)
-                    entry.Object.TextColor3 = active and theme.Accent2 or theme.Text
+                    retint(entry.Object, active and "Accent2" or "Text")
                 end
             end
             for _, option in ipairs(options) do
@@ -2164,7 +2419,8 @@ function Vortex:CreateWindow(options)
                 return false
             end
             refresh()
-            if flagName then registerFlag(flagName, group) end
+            group.Object = group.Items[1] and group.Items[1].Object
+            if flagName then registerFlag(flagName, group, tab) end
             return group
         end
 
@@ -2214,6 +2470,7 @@ function Vortex:CreateWindow(options)
                         end
                     end)
                 end
+                body.Size = UDim2.new(1, -16, 0, math.min(130, #newItems * 27))
                 body.CanvasSize = UDim2.fromOffset(0, #newItems * 27)
                 if open then frame.Size = UDim2.new(1, 0, 0, 44 + math.min(130, #newItems * 27)) end
                 header.Text = tostring(text or "List") .. (open and "  ▲" or "  ▼")
@@ -2311,6 +2568,11 @@ function Vortex:DestroyAll()
         end
     end
     table.clear(self.Windows)
+    if self._NotificationGui then
+        self._NotificationGui:Destroy()
+        self._NotificationGui = nil
+        self._NotificationList = nil
+    end
 end
 
 function Vortex:GetWindow(index)
@@ -2322,10 +2584,22 @@ function Vortex:SetScale(scale)
     for _, window in ipairs(self.Windows) do
         if window.Root and window.Root.Parent then
             local scaler = window.Root:FindFirstChild("VortexScale")
-            if not scaler then
-                scaler = make("UIScale", {Name = "VortexScale"}, window.Root)
+            window._ScaleGeneration = (window._ScaleGeneration or 0) + 1
+            local generation = window._ScaleGeneration
+            if self.Scale == 1 then
+                if scaler then
+                    tween(scaler, 0.22, {Scale = 1})
+                    task.delay(0.24, function()
+                        if window._ScaleGeneration ~= generation then return end
+                        if scaler and scaler.Parent then scaler:Destroy() end
+                    end)
+                end
+            else
+                if not scaler then
+                    scaler = make("UIScale", {Name = "VortexScale"}, window.Root)
+                end
+                tween(scaler, 0.22, {Scale = self.Scale})
             end
-            tween(scaler, 0.22, {Scale = self.Scale})
         end
     end
     return self.Scale
@@ -2333,7 +2607,7 @@ end
 
 local function safeConfigName(name)
     if name == nil then return "VortexConfig" end
-    if type(name) ~= "string" or name == "" or name:find("%.%.", 1, true) or name:find("[/\\]", 1) then
+    if type(name) ~= "string" or name == "" or name:find("..", 1, true) or name:find("[/\\]", 1) then
         return nil
     end
     return name:gsub("%.json$", "")
@@ -2345,8 +2619,14 @@ function Vortex:SaveConfig(name, data)
     if not configName then return false, "invalid config name" end
     local ok, encoded = pcall(function() return game:GetService("HttpService"):JSONEncode(data or {}) end)
     if not ok then return false, encoded end
-    local success, err = pcall(writefile, configName .. ".json", encoded)
-    return success, err
+    local ok, result = pcall(writefile, configName .. ".json", encoded)
+    if not ok then
+        return false, result
+    end
+    if result == false then
+        return false, "writefile returned false"
+    end
+    return true
 end
 
 function Vortex:LoadConfig(name)
