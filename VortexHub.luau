@@ -1,11 +1,3 @@
---[[
-    VORTEX HUB
-    Owner: Nexxy
-    Original UI implementation
-
-    A lightweight Roblox UI library with animated styling, draggable windows,
-    tabs, notifications, and reusable controls.
-]]
 
 local Vortex = {
     Name = "Vortex Hub",
@@ -598,7 +590,6 @@ function Vortex:Notify(title, message, duration)
         BorderSizePixel = 0,
     }, holder)
     corner(card, 9)
-    stroke(card, theme.Accent, 0.35, 1)
     local bar = make("Frame", {
         Position = UDim2.new(0, 0, 0, 9),
         Size = UDim2.new(0, 3, 1, -18),
@@ -655,6 +646,7 @@ function Vortex:CreateWindow(options)
     local mobileHeightRatio = math.clamp(options.MobileHeightRatio or 0.78, 0.62, 0.9)
     local mobileAspectRatio = math.clamp(options.MobileAspectRatio or (width / height), 0.72, 1.5)
     local panelTransparency = math.clamp(options.PanelTransparency or options.BackgroundColorTransparency or 0, 0, 1)
+    local minimizeMode = (options.MinimizeMode == "bubble") and "bubble" or "header"
     local camera = workspace.CurrentCamera
     local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
     local isTouch = UserInputService.TouchEnabled
@@ -990,6 +982,7 @@ function Vortex:CreateWindow(options)
         IsOpen = true,
         IsMinimized = false,
         PanelTransparency = panelTransparency,
+        MinimizeMode = minimizeMode,
         _connections = {gradientConnection, rainbowConnection, tabFadeConnections[1], tabFadeConnections[2], tabFadeConnections[3]},
     }
     table.insert(self.Windows, window)
@@ -1108,7 +1101,19 @@ function Vortex:CreateWindow(options)
     minimize.MouseButton1Click:Connect(function()
         window:Minimize(not window.IsMinimized)
     end)
-    close.MouseButton1Click:Connect(function() window:Destroy() end)
+    close.MouseButton1Click:Connect(function()
+        window:Dialog({
+            Title = "Close Window?",
+            Content = "Are you sure you want to close this window?",
+            Actions = {
+                {Name = "Cancel", Value = false},
+                {Name = "Close", Value = true, Primary = true},
+            },
+            Callback = function(result)
+                if result == true then window:Destroy() end
+            end,
+        })
+    end)
 
     function window:Destroy()
         if self._Destroyed then return end
@@ -1181,9 +1186,99 @@ function Vortex:CreateWindow(options)
         tween(self.Root, 0.25, {Position = UDim2.new(0.5, 0, 0.5, -currentHeight / 2)})
     end
 
+    local bubble, bubbleRing
+    local function ensureBubble()
+        if bubble then return end
+        bubble = make("Frame", {
+            Name = "VortexMinimizeBubble",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Size = UDim2.fromOffset(52, 52),
+            BackgroundColor3 = theme.Surface,
+            Visible = false,
+            ZIndex = 40,
+        }, gui)
+        corner(bubble, 26)
+        bubbleRing = stroke(bubble, theme.Accent, 0.1, 2)
+        local ringGradient = make("UIGradient", {
+            Color = ColorSequence.new(theme.Accent, theme.Accent2 or theme.Accent),
+        }, bubbleRing)
+        if titleIcon then
+            make("ImageLabel", {
+                Size = UDim2.fromScale(0.6, 0.6),
+                Position = UDim2.fromScale(0.2, 0.2),
+                BackgroundTransparency = 1,
+                Image = titleIcon.Image,
+                ImageColor3 = theme.Accent,
+            }, bubble)
+        end
+        local clickCatcher = make("TextButton", {
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            Text = "",
+            AutoButtonColor = false,
+        }, bubble)
+        local dragging, dragStart, startPos, totalMove = false, nil, nil, 0
+        clickCatcher.InputBegan:Connect(function(input)
+            if signal(input) then
+                dragging = true
+                dragStart = input.Position
+                startPos = bubble.Position
+                totalMove = 0
+            end
+        end)
+        window:Track(UserInputService.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local delta = input.Position - dragStart
+                totalMove = delta.Magnitude
+                local camera = workspace.CurrentCamera
+                local view = camera and camera.ViewportSize or Vector2.new(800, 600)
+                local x = math.clamp(startPos.X.Offset + delta.X, 26, view.X - 26)
+                local y = math.clamp(startPos.Y.Offset + delta.Y, 26, view.Y - 26)
+                bubble.Position = UDim2.fromOffset(x, y)
+            end
+        end))
+        window:Track(UserInputService.InputEnded:Connect(function(input)
+            if signal(input) and dragging then
+                dragging = false
+                if totalMove < 8 then window:Minimize(false) end
+            end
+        end))
+        local rotConnection = RunService.RenderStepped:Connect(function(delta)
+            if not bubble.Parent then rotConnection:Disconnect() return end
+            if not bubble.Visible then return end
+            ringGradient.Rotation = (ringGradient.Rotation + delta * 90) % 360
+        end)
+        table.insert(window._connections, rotConnection)
+    end
+
     function window:Minimize(value)
         if value == nil then value = not self.IsMinimized end
         self.IsMinimized = value == true
+        if self.MinimizeMode == "bubble" then
+            if self.IsMinimized then
+                ensureBubble()
+                local center = root.AbsolutePosition + root.AbsoluteSize / 2
+                bubble.Position = UDim2.fromOffset(center.X, center.Y)
+                tween(root, 0.2, {Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1}, Enum.EasingStyle.Quad)
+                task.delay(0.2, function()
+                    if self.IsMinimized and root.Parent then
+                        root.Visible = false
+                        bubble.Visible = true
+                    end
+                end)
+            else
+                if bubble then
+                    bubble.Visible = false
+                    root.Position = UDim2.fromOffset(bubble.Position.X.Offset, bubble.Position.Y.Offset)
+                end
+                root.Visible = true
+                root.Size = UDim2.fromOffset(math.max(1, width - 40), math.max(1, height - 40))
+                tween(root, 0.3, {Size = self.NormalSize, BackgroundTransparency = self.PanelTransparency}, Enum.EasingStyle.Back)
+                task.defer(function() self:ClampToViewport() end)
+            end
+            minimize.Text = self.IsMinimized and "+" or "—"
+            return
+        end
         tabBar.Visible = not self.IsMinimized
         content.Visible = not self.IsMinimized
         if self.IsMinimized then
@@ -1195,6 +1290,11 @@ function Vortex:CreateWindow(options)
         minimize.Text = self.IsMinimized and "+" or "—"
         topRepair.Visible = not self.IsMinimized
         tween(self.Root, 0.28, {Size = self.IsMinimized and UDim2.fromOffset(width, 58) or self.NormalSize}, Enum.EasingStyle.Quint)
+    end
+
+    function window:SetMinimizeMode(mode)
+        self.MinimizeMode = (mode == "bubble") and "bubble" or "header"
+        return self.MinimizeMode
     end
 
     function window:SetTitle(value)
@@ -1825,15 +1925,12 @@ function Vortex:CreateWindow(options)
                 Size = UDim2.fromOffset(14, 14),
                 BackgroundTransparency = 1,
                 Text = "v",
+                Rotation = 0,
                 TextColor3 = theme.Muted,
                 Font = Enum.Font.GothamBold,
                 TextSize = 11,
             }, button)
             local uniqueOptionCount = #uniqueOptions(options)
-            -- Smaller rows (20px, was 25) with a small inset (UIPadding) around the
-            -- list itself, so each row's outline stroke has breathing room instead
-            -- of sitting flush against the list's own rounded edge — flush edges
-            -- were what made the outline look cut off.
             local rowPitch = 22
             local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * rowPitch + 8)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * rowPitch + 8), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
             corner(list, 6)
@@ -1842,7 +1939,7 @@ function Vortex:CreateWindow(options)
             local function closeDropdown()
                 open = false
                 list.Visible = false
-                chevron.Text = "v"
+                tween(chevron, 0.15, {Rotation = 0})
                 frame.Size = UDim2.new(1, 0, 0, 44)
             end
             local optionRows = {}
@@ -1851,10 +1948,6 @@ function Vortex:CreateWindow(options)
                 row.BackgroundTransparency = isSelected and 0.85 or 1
                 local rowStroke = row:FindFirstChildOfClass("UIStroke")
                 if rowStroke then
-                    -- Retag alongside the color reassignment (same reasoning as
-                    -- SelectTab/AddToggle/AddRadio): otherwise a later SetTheme
-                    -- would read the stale "Accent" tag on every row, even the
-                    -- unselected ones that are currently showing theme.Border.
                     rowStroke:SetAttribute("ThemeRole", isSelected and "Accent" or "Border")
                     rowStroke.Color = isSelected and Vortex.Theme.Accent or Vortex.Theme.Border
                     rowStroke.Transparency = isSelected and 0 or 0.5
@@ -1900,7 +1993,7 @@ function Vortex:CreateWindow(options)
             button.MouseButton1Click:Connect(function()
                 open = not open
                 list.Visible = open
-                chevron.Text = open and "^" or "v"
+                tween(chevron, 0.15, {Rotation = open and 180 or 0})
                 frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * rowPitch + 8) or 44)
             end)
             tab:Track(UserInputService.InputBegan:Connect(function(input)
@@ -1979,6 +2072,7 @@ function Vortex:CreateWindow(options)
                 Size = UDim2.fromOffset(14, 14),
                 BackgroundTransparency = 1,
                 Text = "v",
+                Rotation = 0,
                 TextColor3 = theme.Muted,
                 Font = Enum.Font.GothamBold,
                 TextSize = 11,
@@ -1991,7 +2085,7 @@ function Vortex:CreateWindow(options)
             local function closeDropdown()
                 open = false
                 list.Visible = false
-                chevron.Text = "v"
+                tween(chevron, 0.15, {Rotation = 0})
                 frame.Size = UDim2.new(1, 0, 0, 44)
             end
             local optionButtons = {}
@@ -2044,7 +2138,7 @@ function Vortex:CreateWindow(options)
             button.MouseButton1Click:Connect(function()
                 open = not open
                 list.Visible = open
-                chevron.Text = open and "^" or "v"
+                tween(chevron, 0.15, {Rotation = open and 180 or 0})
                 frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * rowPitch + 8) or 44)
             end)
             tab:Track(UserInputService.InputBegan:Connect(function(input)
