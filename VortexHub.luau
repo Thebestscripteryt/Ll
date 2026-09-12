@@ -809,7 +809,8 @@ function Vortex:CreateWindow(options)
             task.wait(0.55)
         end
     end)
-    local gradientConnection = RunService.RenderStepped:Connect(function(delta)
+    local gradientConnection
+    gradientConnection = RunService.RenderStepped:Connect(function(delta)
         if not root.Parent then gradientConnection:Disconnect() return end
         if not gui.Enabled then return end
         gradient.Rotation = (gradient.Rotation + delta * 35) % 360
@@ -921,7 +922,8 @@ function Vortex:CreateWindow(options)
             ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
         }),
     }, tabBarOutline)
-    local rainbowConnection = RunService.RenderStepped:Connect(function(delta)
+    local rainbowConnection
+    rainbowConnection = RunService.RenderStepped:Connect(function(delta)
         if not tabBarOutline.Parent then rainbowConnection:Disconnect() return end
         if not gui.Enabled then return end
         tabBarOutlineGradient.Rotation = (tabBarOutlineGradient.Rotation + delta * 60) % 360
@@ -1088,12 +1090,6 @@ function Vortex:CreateWindow(options)
             local delta = input.Position - dragStart
             local size = root.AbsoluteSize
             local view = camera and camera.ViewportSize or Vector2.new(800, 600)
-            -- Free dragging, no hard clamp to the viewport edge (that's what made
-            -- it feel stuck/cranky before). But without *any* limit, the title
-            -- bar — the only draggable part — could end up fully off-screen with
-            -- no way to grab it again. So instead of clamping to "stay fully
-            -- inside", this only guarantees a small grabbable sliver (a corner of
-            -- the header) always remains reachable on-screen.
             local grabMargin = 48
             local x = math.clamp(startAbsolute.X + delta.X, grabMargin - size.X, view.X - grabMargin)
             local y = math.clamp(startAbsolute.Y + delta.Y, grabMargin - size.Y, view.Y - grabMargin)
