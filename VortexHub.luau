@@ -596,12 +596,12 @@ function Vortex:Notify(title, message, duration)
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundColor3 = theme.Surface,
         BorderSizePixel = 0,
-        ClipsDescendants = true,
     }, holder)
     corner(card, 9)
     stroke(card, theme.Accent, 0.35, 1)
     local bar = make("Frame", {
-        Size = UDim2.new(0, 3, 1, 0),
+        Position = UDim2.new(0, 0, 0, 9),
+        Size = UDim2.new(0, 3, 1, -18),
         BackgroundColor3 = theme.Accent2,
         BorderSizePixel = 0,
     }, card)
@@ -1824,19 +1824,25 @@ function Vortex:CreateWindow(options)
                 Position = UDim2.new(1, -8, 0.5, 0),
                 Size = UDim2.fromOffset(14, 14),
                 BackgroundTransparency = 1,
-                Text = "\226\150\190",
+                Text = "v",
                 TextColor3 = theme.Muted,
                 Font = Enum.Font.GothamBold,
                 TextSize = 11,
             }, button)
             local uniqueOptionCount = #uniqueOptions(options)
-            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
+            -- Smaller rows (20px, was 25) with a small inset (UIPadding) around the
+            -- list itself, so each row's outline stroke has breathing room instead
+            -- of sitting flush against the list's own rounded edge — flush edges
+            -- were what made the outline look cut off.
+            local rowPitch = 22
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * rowPitch + 8)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * rowPitch + 8), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
+            make("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, list)
             local function closeDropdown()
                 open = false
                 list.Visible = false
-                chevron.Text = "\226\150\190"
+                chevron.Text = "v"
                 frame.Size = UDim2.new(1, 0, 0, 44)
             end
             local optionRows = {}
@@ -1867,11 +1873,11 @@ function Vortex:CreateWindow(options)
                 optionRows = {}
                 local deduped = uniqueOptions(options)
                 uniqueOptionCount = #deduped
-                list.Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27))
-                list.CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27)
+                list.Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * rowPitch + 8))
+                list.CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * rowPitch + 8)
                 for _, option in ipairs(deduped) do
-                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false}, list)
-                    corner(optionButton, 6)
+                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 20), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, AutoButtonColor = false}, list)
+                    corner(optionButton, 5)
                     stroke(optionButton, theme.Border, 0.5, 1)
                     make("UIPadding", {PaddingLeft = UDim.new(0, 6)}, optionButton)
                     optionRows[option] = optionButton
@@ -1894,8 +1900,8 @@ function Vortex:CreateWindow(options)
             button.MouseButton1Click:Connect(function()
                 open = not open
                 list.Visible = open
-                chevron.Text = open and "\226\150\180" or "\226\150\190"
-                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * 27) or 44)
+                chevron.Text = open and "^" or "v"
+                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * rowPitch + 8) or 44)
             end)
             tab:Track(UserInputService.InputBegan:Connect(function(input)
                 if open and signal(input) then
@@ -1972,18 +1978,20 @@ function Vortex:CreateWindow(options)
                 Position = UDim2.new(1, -8, 0.5, 0),
                 Size = UDim2.fromOffset(14, 14),
                 BackgroundTransparency = 1,
-                Text = "\226\150\190",
+                Text = "v",
                 TextColor3 = theme.Muted,
                 Font = Enum.Font.GothamBold,
                 TextSize = 11,
             }, button)
-            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * 27)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * 27), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
+            local rowPitch = 22
+            local list = make("ScrollingFrame", {Position = UDim2.fromOffset(10, 42), Size = UDim2.new(1, -20, 0, math.min(130, uniqueOptionCount * rowPitch + 8)), BackgroundColor3 = theme.Surface2, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, uniqueOptionCount * rowPitch + 8), ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false}, frame)
             corner(list, 6)
             make("UIListLayout", {Padding = UDim.new(0, 2)}, list)
+            make("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4)}, list)
             local function closeDropdown()
                 open = false
                 list.Visible = false
-                chevron.Text = "\226\150\190"
+                chevron.Text = "v"
                 frame.Size = UDim2.new(1, 0, 0, 44)
             end
             local optionButtons = {}
@@ -2019,8 +2027,8 @@ function Vortex:CreateWindow(options)
                 if optionButtons[option] then
                     warn(("Duplicate MultiDropdown option: %s"):format(tostring(option)))
                 else
-                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 25), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
-                    corner(optionButton, 6)
+                    local optionButton = make("TextButton", {Size = UDim2.new(1, 0, 0, 20), BackgroundColor3 = theme.Accent, BackgroundTransparency = 1, Text = "□  " .. tostring(option), TextColor3 = theme.Text, Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false}, list)
+                    corner(optionButton, 5)
                     stroke(optionButton, theme.Border, 0.5, 1)
                     make("UIPadding", {PaddingLeft = UDim.new(0, 8)}, optionButton)
                     optionButtons[option] = optionButton
@@ -2036,8 +2044,8 @@ function Vortex:CreateWindow(options)
             button.MouseButton1Click:Connect(function()
                 open = not open
                 list.Visible = open
-                chevron.Text = open and "\226\150\180" or "\226\150\190"
-                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * 27) or 44)
+                chevron.Text = open and "^" or "v"
+                frame.Size = UDim2.new(1, 0, 0, open and 48 + math.min(130, uniqueOptionCount * rowPitch + 8) or 44)
             end)
             tab:Track(UserInputService.InputBegan:Connect(function(input)
                 if open and signal(input) then
